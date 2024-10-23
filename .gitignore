@@ -6,6 +6,11 @@ __pycache__/
 # C extensions
 *.so
 
+wandb/
+data/
+saved_weights/
+
+
 # Distribution / packaging
 .Python
 build/
