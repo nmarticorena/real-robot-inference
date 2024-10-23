@@ -26,115 +26,198 @@ from skvideo.io import vwrite
 from IPython.display import Video
 import gdown
 import os
+import time
 
-# limit enviornment interaction to 200 steps before termination
-max_steps = 200
-env = PushTImageEnv()
-# use a seed >200 to avoid initial states seen in the training dataset
-env.seed(100000)
+from policy import Policy
+from dataset import normalize_data, unnormalize_data
 
-# get first observation
-obs, info = env.reset()
+import numpy as np
+import time
+import json
+import collections
+import reactivex as rx
+from reactivex import operators as ops
 
-# keep a queue of last 2 steps of observations
-obs_deque = collections.deque(
-    [obs] * obs_horizon, maxlen=obs_horizon)
-# save visualization and rewards
-imgs = [env.render(mode='rgb_array')]
-rewards = list()
-done = False
-step_idx = 0
+from diffrobot.robot.robot import Robot, to_affine, matrix_to_pos_orn
 
-with tqdm(total=max_steps, desc="Eval PushTImageEnv") as pbar:
-    while not done:
-        B = 1
-        # stack the last obs_horizon number of observations
-        images = np.stack([x['image'] for x in obs_deque])
-        agent_poses = np.stack([x['agent_pos'] for x in obs_deque])
 
-        # normalize observation
-        nagent_poses = normalize_data(agent_poses, stats=stats['agent_pos'])
-        # images are already normalized to [0,1]
-        nimages = images
 
-        # device transfer
-        nimages = torch.from_numpy(nimages).to(device, dtype=torch.float32)
-        # (2,3,96,96)
-        nagent_poses = torch.from_numpy(nagent_poses).to(device, dtype=torch.float32)
-        # (2,2)
 
-        # infer action
+
+class PerceptionSystem:
+    def __init__(self):
+        self.cams = MultiRealsense(
+            serial_numbers=['128422271784', '123622270136'],
+            resolution=(640,480),
+        )
+    def start(self):
+        self.cams.start()
+        self.cams.set_exposure(exposure=5000, gain=60)
+   
+    def stop(self):
+        self.cams.stop()
+
+
+class RobotInferenceController:
+    def __init__(self):
+        
+        self.robot = self.create_robot()
+        self.perception_system = PerceptionSystem()
+        self.perception_system.start()
+        self.setup_diffusion_policy()
+
+    def create_robot(self, ip:str = "172.16.0.2", dynamic_rel: float=0.4):
+        panda = Robot(ip)
+        panda.gripper.open()
+        panda.set_dynamic_rel(dynamic_rel, accel_rel=0.2, jerk_rel=0.05)
+        panda.frankx.set_collision_behavior(
+            [30.0, 30.0, 30.0, 30.0, 30.0, 30.0, 30.0],
+            [30.0, 30.0, 30.0, 30.0, 30.0, 30.0, 30.0],
+            [30.0, 30.0, 30.0, 30.0, 30.0, 30.0],
+            [30.0, 30.0, 30.0, 30.0, 30.0, 30.0])
+        return panda
+
+    def setup_diffusion_policy(self):
+        torch.cuda.empty_cache()
+        self.policy = Policy(config_file='vision_config',
+                        saved_run_name='data/t_block_1', 
+                        mode='infer')
+
+        self.obs_horizon = self.policy.params.obs_horizon
+        self.obs_deque = collections.deque(maxlen=self.policy.params.obs_horizon)
+
+
+    def process_inference_vision(self, obs_deque):
+        image_side = np.stack([x['image_side'] for x in obs_deque])
+        image_wrist = np.stack([x['image_wrist'] for x in obs_deque])
+        agent_pos = np.stack([x['agent_pos'] for x in obs_deque])
+
+        nagent_pos = self.dutils.normalize_data(agent_pos, stats=self.stats['states'])
+        nimage_side = self.policy.transform(image_side)
+        nimage_wrist = self.policy.transform(image_wrist)
+
+        nagent_pos = torch.from_numpy(nagent_pos).to(self.device, dtype=self.precision)
+        nimage_side = torch.from_numpy(nimage_side).to(self.device, dtype=self.precision)
+        nimage_wrist = torch.from_numpy(nimage_wrist).to(self.device, dtype=self.precision)
+
+        nimage_side = torch.stack([self.transform(img) for img in nimage_side])
+        nimage_wrist = torch.stack([self.transform(img) for img in nimage_wrist])
+
+        image_features_side = self.policy.ema_nets['vision_encoder_side'](nimage_side)
+        image_features_wrist = self.policy.ema_nets['vision_encoder_wrist'](nimage_wrist)
+
+        obs_features = torch.cat([image_features_side, image_features_wrist, nagent_pos], dim=-1)                
+        obs_cond = obs_features.unsqueeze(0).flatten(start_dim=1)
+        
+        return obs_cond
+    
+    def get_observation(self):
+        s = self.robot.get_state()
+        X_BE = np.array(s.O_T_EE).reshape(4,4).T
+        self.detect_objects()
+
+        # get frames
+        image_side = self.perception_system.cams.get_frame(0)
+        image_wrist = self.perception_system.cams.get_frame(1)
+
+        X_OO_O = np.dot(np.linalg.inv(X_B_OO), X_BO) 
+        # self.robot_visualiser.object_pose.T = self.X_BO
+        return {"X_BE": X_BE, 
+                "phase": task.phase}
+    
+    
+    def infer_action(self, obs_deque):
+
         with torch.no_grad():
-            # get image features
-            image_features = ema_nets['vision_encoder'](nimages)
-            # (2,512)
 
-            # concat with low-dim observations
-            obs_features = torch.cat([image_features, nagent_poses], dim=-1)
-
-            # reshape observation to (B,obs_horizon*obs_dim)
-            obs_cond = obs_features.unsqueeze(0).flatten(start_dim=1)
+            obs_cond = self.process_inference_vision(obs_deque)
 
             # initialize action from Guassian noise
-            noisy_action = torch.randn(
-                (B, pred_horizon, action_dim), device=device)
+            noisy_action = torch.randn((1, self.params.pred_horizon, self.params.action_dim), device=self.device, dtype=self.precision)
             naction = noisy_action
 
             # init scheduler
-            noise_scheduler.set_timesteps(num_diffusion_iters)
+            self.policy.noise_scheduler.set_timesteps(self.params.num_diffusion_iters)
+            # self.noise_scheduler.set_timesteps(20)
 
-            for k in noise_scheduler.timesteps:
+            for k in self.noise_scheduler.timesteps:
                 # predict noise
-                noise_pred = ema_nets['noise_pred_net'](
+                noise_pred = self.policy.ema_nets['noise_pred_net'](
                     sample=naction,
                     timestep=k,
                     global_cond=obs_cond
                 )
 
                 # inverse diffusion step (remove noise)
-                naction = noise_scheduler.step(
+                naction = self.noise_scheduler.step(
                     model_output=noise_pred,
                     timestep=k,
                     sample=naction
                 ).prev_sample
+        
+        naction = naction.detach().to('cpu').numpy()[0]
 
         # unnormalize action
-        naction = naction.detach().to('cpu').numpy()
-        # (B, pred_horizon, action_dim)
-        naction = naction[0]
-        action_pred = unnormalize_data(naction, stats=stats['action'])
+        action_pos = self.dutils.unnormalize_data(naction, stats=self.stats['action'])
 
         # only take action_horizon number of actions
-        start = obs_horizon - 1
-        end = start + action_horizon
-        action = action_pred[start:end,:]
-        # (action_horizon, action_dim)
-
-        # execute action_horizon number of steps
-        # without replanning
-        for i in range(len(action)):
-            # stepping env
-            obs, reward, done, _, info = env.step(action[i])
-            # save observations
-            obs_deque.append(obs)
-            # and reward/vis
-            rewards.append(reward)
-            imgs.append(env.render(mode='rgb_array'))
-
-            # update progress bar
-            step_idx += 1
-            pbar.update(1)
-            pbar.set_postfix(reward=reward)
-            if step_idx > max_steps:
-                done = True
-            if done:
-                break
+        start = self.params.obs_horizon - 1
+        end = start + self.params.action_horizon
+        action = action_pos[start:end]
 
 
-# print out the maximum target coverage
-print('Score: ', max(rewards))
+    def start_inference(self):
+        robot = self.robot
+        obs_stream = rx.interval(0.1, scheduler=rx.scheduler.NewThreadScheduler()) \
+                    .pipe(ops.map(lambda _: self.task.get_observation())) \
+                    .pipe(ops.filter(lambda x: x["X_BO"] is not None)) \
+                    .subscribe(lambda x: self.obs_deque.append(x))  
+      
+        motion = robot.start_impedance_controller(830, 40, 1)
+        done = False
 
-# visualize
-from IPython.display import Video
-vwrite('vis.mp4', imgs)
-Video('vis.mp4', embed=True, width=256, height=256)
+        while not done:
+            # wait for obs_deque to have len 2
+            while len(self.obs_deque) < self.obs_horizon:
+                time.sleep(0.1)
+                # print("Waiting for observation")
+
+            out = self.infer_action(self.obs_deque.copy())
+            action = out['action']
+            action_gripper = out['action_gripper']
+            progress = out['progress']
+
+            X_BE = self.obs_deque[-1]["X_BE"]
+
+            for i in range(len(action)):
+
+                trans, orien = matrix_to_pos_orn(action[i])
+                motion.set_target(to_affine(trans, orien))
+
+                robot_state = motion.get_robot_state()
+
+                self.robot_visualiser.object_pose.T = self.obs_deque[-1]["X_BO"]
+                self.robot_visualiser.policy_pose.T = action[i] 
+                self.robot_visualiser.step(robot_state.q)
+
+                time.sleep(0.2)
+
+
+
+
+
+
+if __name__ == '__main__':
+    
+
+
+    controller = RobotInferenceController(
+        perception_system=perception_system, 
+        )
+        
+    #     #saved_run_name={'cup_rotate': 'golden-grass-127_state', #'fiery-pond-126_state
+    #     #                                                  'place_saucer': 'laced-cosmos-124_state'}, 
+    #                                     #   robot_ip='172.16.0.2')
+    controller.start_inference()
+
+    perception_system.stop()

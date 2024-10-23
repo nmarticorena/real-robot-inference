@@ -13,6 +13,7 @@ from collections import deque
 import copy
 import pdb
 import time
+from policy import Policy
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Train a model for robotic pushing")
@@ -35,40 +36,6 @@ def parse_args():
     parser.add_argument("--use_ema_for_eval", action="store_true", help="Use EMA for evaluation")
     return parser.parse_args()
 
-def create_networks(args, stats):
-    vision_encoder_side = get_resnet('resnet18')
-    vision_encoder_side = replace_bn_with_gn(vision_encoder_side)
-
-    vision_encoder_wrist = get_resnet('resnet18')
-    vision_encoder_wrist = replace_bn_with_gn(vision_encoder_wrist)
-    
-    vision_feature_dim = 512
-    lowdim_obs_dim = 2
-    obs_dim = (vision_feature_dim*2) + lowdim_obs_dim
-    action_dim = 2
-
-    if args.method == 'diffusion':
-        noise_pred_net = DiffusionConditionalUnet1D(
-            input_dim=action_dim,
-            global_cond_dim=obs_dim*args.obs_horizon
-        )
-        nets = nn.ModuleDict({
-            'vision_encoder_side': vision_encoder_side,
-            'vision_encoder_wrist': vision_encoder_wrist,
-            'noise_pred_net': noise_pred_net
-        })
-    elif args.method == 'rs_imle':
-        generator = GeneratorConditionalUnet1D(
-            input_dim=action_dim,
-            global_cond_dim=obs_dim*args.obs_horizon
-        )
-        nets = nn.ModuleDict({
-            'vision_encoder_side': vision_encoder_side,
-            'vision_encoder_wrist': vision_encoder_wrist,
-            'generator': generator
-        })
-
-    return nets.to(args.device)
 
 def rs_imle_loss(real_samples, fake_samples, epsilon=0.1):
     B, T, D = real_samples.shape
@@ -148,8 +115,7 @@ def train(args, nets, dataloader, noise_scheduler, optimizer, lr_scheduler, ema)
         wandb.log({"avg_train_loss": avg_loss, "epoch": epoch})
         print(f"Epoch {epoch+1}/{args.num_epochs} - Avg. Loss: {avg_loss:.4f} - Time: {time.time()-start_time:.2f}s")
 
-  
-    return nets
+    return
 
 
 def main():
@@ -164,26 +130,12 @@ def main():
                                              shuffle=True, 
                                              pin_memory=True,
                                              persistent_workers=True)
-
-    nets = create_networks(args, dataset.stats)
     
-    if args.method == 'diffusion':
-        noise_scheduler = DDPMScheduler(num_train_timesteps=args.num_diffusion_iters, beta_schedule='squaredcos_cap_v2', clip_sample=True, prediction_type='epsilon')
-    else:
-        noise_scheduler = None
+    policy = Policy(config_file='configs/vision_config.py')
+    nets = policy.nets
     
-    ema = EMAModel(parameters=nets.parameters(), power=0.75)
-    optimizer = torch.optim.AdamW(params=nets.parameters(), lr=args.lr, weight_decay=args.weight_decay)
-    lr_scheduler = get_scheduler(name='cosine', optimizer=optimizer, num_warmup_steps=500, num_training_steps=len(dataloader) * args.num_epochs)
-
-    trained_nets = train(args, nets, dataloader, noise_scheduler, optimizer, lr_scheduler, ema)
+    train(args, nets, dataloader, policy.noise_scheduler, policy.optimizer, policy.lr_scheduler, policy.ema)
     
-    # save model ckpt
-    ema_nets = copy.deepcopy(nets)
-    ema.copy_to(ema_nets.parameters())
-    torch.save(nets.state_dict(), f"saved_weights/net.pth")
-    torch.save(ema_nets.state_dict(), f"saved_weights/ema_net.pth")
-
     wandb.finish()
 
 if __name__ == "__main__":

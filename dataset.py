@@ -20,6 +20,7 @@ import tqdm
 import pims
 import joblib
 import h5py
+import pickle as pkl
 
 # Helper function to get normalization stats
 def get_data_stats(data):
@@ -59,6 +60,12 @@ class PolicyDataset(Dataset):
         # Compute statistics for normalization
         self.stats = {'agent_pos': None, 'action': None}
         self.compute_normalization_stats()
+
+        # save stats
+        with open(os.path.join(self.dataset_path, "stats.pkl"), 'wb') as f:
+            pkl.dump(self.stats, f)
+
+
         # Create sample indices
         self.indices = self.create_sample_indices(self.rlds, sequence_length=pred_horizon)
 
