@@ -61,7 +61,8 @@ class Policy:
         if mode == 'infer':
             self.load_weights(saved_run_name)
 
-            stats_path = os.path.join("/mnt/droplet/", 'stats.pkl')
+            # stats_path = os.path.join("/mnt/droplet/", 'stats.pkl')
+            stats_path = os.path.join("saved_weights/728_epochs/", 'stats.pkl')
             self.stats = np.load(stats_path, allow_pickle=True)
 
             self.transform = transforms.Compose([
@@ -76,8 +77,12 @@ class Policy:
     def load_weights(self, saved_run_name, load_best=True):
         self.ema_nets = copy.deepcopy(self.nets)
 
-        fpath_ema = os.path.join("/mnt/droplet/", "ema_net.pth")
-        fpath_nets = os.path.join("/mnt/droplet/", "net.pth")
+        # fpath_ema = os.path.join("/mnt/droplet/", "ema_net.pth")
+        # fpath_nets = os.path.join("/mnt/droplet/", "net.pth")
+
+        fpath_ema = os.path.join("saved_weights/728_epochs/", "ema_net.pth")
+        fpath_nets = os.path.join("saved_weights/728_epochs/", "net.pth")
+
 
         state_dict_nets = torch.load(fpath_nets, map_location='cuda')
         self.nets.load_state_dict(state_dict_nets)
