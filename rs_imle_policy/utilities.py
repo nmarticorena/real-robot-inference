@@ -13,7 +13,10 @@ import sys
 
 def get_config(config_file):
     config_file += '.py'
-    config_file = os.path.join("configs", config_file)
+    # Get the current script's directory
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    # Go one directory up
+    config_file = os.path.join(script_dir, "configs", config_file)
     module_name = os.path.basename(config_file).replace('.py', '')
     spec = importlib.util.spec_from_file_location(module_name, config_file)
     config_module = importlib.util.module_from_spec(spec)
@@ -24,7 +27,7 @@ def get_config(config_file):
 def cache_pims_video(dataset_path):
     # Open an HDF5 file in write mode
     with h5py.File('t_block_1.h5', 'w') as h5f:
-        episodes = sorted(os.listdir(os.path.join(self.dataset_path, "episodes")), key=lambda x: int(x))
+        episodes = sorted(os.listdir(os.path.join(dataset_path, "episodes")), key=lambda x: int(x))
         for episode in tqdm.tqdm(episodes):
             video_wrist = os.path.join(dataset_path, "episodes", episode, "video", "0.mp4")
             video_side = os.path.join(dataset_path, "episodes", episode, "video", "2.mp4")
@@ -50,5 +53,6 @@ def cache_pims_video(dataset_path):
 
     print("Video data saved to video_data.h5")
 
-# Usage
-cache_pims_video('data/t_block_1')
+
+if __name__ == "__main__":
+    cache_pims_video('data/t_block_1')

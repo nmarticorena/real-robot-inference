@@ -1,17 +1,17 @@
 
-from network import get_resnet, replace_bn_with_gn, DiffusionConditionalUnet1D, GeneratorConditionalUnet1D
-from utilities import get_config
+from rs_imle_policy.network import get_resnet, replace_bn_with_gn, DiffusionConditionalUnet1D, GeneratorConditionalUnet1D
+from rs_imle_policy.utilities import get_config
 import torch
 import torch.nn as nn
 from diffusers.training_utils import EMAModel
 from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
 from diffusers.optimization import get_scheduler
-from dataset import PolicyDataset, normalize_data, unnormalize_data
+from rs_imle_policy.dataset import PolicyDataset, normalize_data, unnormalize_data
 import os
 import copy
 import numpy as np
 import torchvision.transforms as transforms
-
+import pdb
 
 class Policy:
     def __init__(self, 
@@ -33,6 +33,8 @@ class Policy:
         self.ema = EMAModel(parameters=self.nets.parameters(), power=0.75)
 
         self.precision = torch.float32
+
+        self.device = self.params.device
 
 
         if mode == 'train':
@@ -58,9 +60,9 @@ class Policy:
         
         if mode == 'infer':
             self.load_weights(saved_run_name)
-            # stats_path = os.path.join("/mnt/droplet/", saved_run_name, 'stats.npy')
-            stats_path = os.path.join("/saved_weights/", saved_run_name, 'stats.npy')
-            self.stats = np.load(stats_path, allow_pickle=True).item()
+
+            stats_path = os.path.join("/mnt/droplet/", 'stats.pkl')
+            self.stats = np.load(stats_path, allow_pickle=True)
 
             self.transform = transforms.Compose([
                             transforms.ToPILImage(),
@@ -74,8 +76,8 @@ class Policy:
     def load_weights(self, saved_run_name, load_best=True):
         self.ema_nets = copy.deepcopy(self.nets)
 
-        fpath_ema = os.path.join("/mnt/droplet/", saved_run_name, "saved_weights", 'ema.pth')
-        fpath_nets = os.path.join("/mnt/droplet/", saved_run_name, "saved_weights", 'net.pth')
+        fpath_ema = os.path.join("/mnt/droplet/", "ema_net.pth")
+        fpath_nets = os.path.join("/mnt/droplet/", "net.pth")
 
         state_dict_nets = torch.load(fpath_nets, map_location='cuda')
         self.nets.load_state_dict(state_dict_nets)
