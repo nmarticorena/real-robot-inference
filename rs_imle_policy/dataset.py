@@ -134,7 +134,7 @@ class PolicyDataset(Dataset):
         indices = []
         for episode in rlds_dataset.keys():
             episode_length = len(rlds_dataset[episode]['robot_pos'])
-            range_idx = episode_length - sequence_length + 1
+            range_idx = episode_length - (sequence_length + 2)
             for idx in range(range_idx):
                 buffer_start_idx = idx
                 buffer_end_idx = idx + sequence_length
@@ -152,7 +152,8 @@ class PolicyDataset(Dataset):
 
     def sample_sequence(self, episode, buffer_start_idx, buffer_end_idx):
         agent_pos = self.rlds[episode]['robot_pos'][buffer_start_idx:buffer_end_idx]
-        action = self.rlds[episode]['action'][buffer_start_idx:buffer_end_idx]
+        # action = self.rlds[episode]['action'][buffer_start_idx:buffer_end_idx]
+        action = self.rlds[episode]['robot_pos'][buffer_start_idx+1:buffer_end_idx+1]
         frames = self.read_video_frames(episode, buffer_start_idx, buffer_end_idx)
 
         seq = {
