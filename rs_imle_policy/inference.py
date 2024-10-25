@@ -105,8 +105,6 @@ class RobotInferenceController:
     
     
     def get_observation(self):
-
-
         # s = self.robot.get_state()
         s = self.motion.get_robot_state()
         # s = self.robot.read_once()
