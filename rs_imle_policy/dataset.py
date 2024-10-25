@@ -38,7 +38,7 @@ def unnormalize_data(ndata, stats):
 
 class PolicyDataset(Dataset):
     def __init__(self, dataset_path: str, pred_horizon: int, obs_horizon: int,
-                 action_horizon: int, transform: Optional[Callable] = None):
+                 action_horizon: int, transform: Optional[Callable] = None, mode='train'):
         self.dataset_path = dataset_path
         self.pred_horizon = pred_horizon
         self.obs_horizon = obs_horizon
@@ -58,13 +58,14 @@ class PolicyDataset(Dataset):
         with open(os.path.join(self.dataset_path, "stats.pkl"), 'wb') as f:
             pkl.dump(self.stats, f)
 
-
         # Create sample indices
         self.indices = self.create_sample_indices(self.rlds, sequence_length=pred_horizon)
 
         # Normalize the data
         self.normalize_rlds(self.rlds)
-        self.cached_dataset = h5py.File('data/t_block_1/t_block_1.h5', 'r')
+
+        if mode == 'train':
+            self.cached_dataset = h5py.File('data/t_block_1/t_block_1.h5', 'r')
 
 
         if self.transform is None:
@@ -108,12 +109,14 @@ class PolicyDataset(Dataset):
             X_BE_leader = [(self.robot.fkine(np.array(q), "panda_link8")).A for q in df['gello_q']]
 
             # Extract only xy coordinates from the 4x4 matrix
-            X_BE_follower = [np.array(x)[:2, 3] for x in X_BE_follower]
-            X_BE_leader = [np.array(x)[:2, 3] for x in X_BE_leader]
+            X_BE_follower_xy = [np.array(x)[:2, 3] for x in X_BE_follower]
+            X_BE_leader_xy = [np.array(x)[:2, 3] for x in X_BE_leader]
 
             rlds[episode_index] = {
-                'robot_pos': X_BE_follower,
-                'action': X_BE_leader,
+                'robot_pos': X_BE_follower_xy,
+                'action': X_BE_leader_xy,
+                'gello_q': df['gello_q'].tolist(),
+                'robot_q': df['robot_q'].tolist()
             }
 
         return rlds

@@ -10,6 +10,11 @@ rs_imle_policy/wandb/
 rs_imle_policy/data/
 rs_imle_policy/saved_weights/
 
+wandb/
+data/
+saved_weights/
+
+
 
 # Distribution / packaging
 .Python
