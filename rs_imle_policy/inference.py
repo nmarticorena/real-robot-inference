@@ -153,7 +153,7 @@ class RobotInferenceController:
         naction = naction.detach().to('cpu').numpy()[0]
 
         # unnormalize action
-        action_pos = unnormalize_data(naction, stats=self.policy.stats['action'])
+        action_pos = unnormalize_data(naction, stats=self.policy.stats['agent_pos'])
 
         # only take action_horizon number of actions
         start = self.policy.params.obs_horizon - 1
