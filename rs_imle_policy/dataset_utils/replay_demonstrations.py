@@ -5,13 +5,15 @@ import spatialmath as sm
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 from rs_imle_policy.dataset import PolicyDataset
+import matplotlib.pyplot as plt
 
-
-rlds = PolicyDataset('../../data/t_block_1', pred_horizon=16, obs_horizon=2, action_horizon=8, mode='test').rlds
+dataset = PolicyDataset('../../data/t_block_1', pred_horizon=16, obs_horizon=2, action_horizon=8, mode='test')
+rlds = dataset.rlds
 env = RobotViz()
 
 for episode in rlds:
     ep_data = rlds[episode]
+    ep_data_video = dataset.cached_dataset[str(episode)]
 
 
     for idx in range(len(ep_data['robot_pos'])):
@@ -32,17 +34,24 @@ for episode in rlds:
 
 
         print('norm: ', pose.t)
-
-        print(ep_data['action'][idx])
+        print('actual: ', ep_data['action'][idx])
 
         action = ep_data['action'][idx]
         robot_pos = ep_data['robot_pos'][idx]
-
-        # print(f'Action: {action}')
-        # print(f'Robot pos: {robot_pos}')
-# 
+ 
         env.policy_pose.T = sm.SE3(pose, check=False).norm()
         env.step(ep_data['robot_q'][idx])
+
+        # show image
+        wrist_frames = ep_data_video['wrist'][idx:idx+2]
+        side_frames = ep_data_video['side'][idx:idx+2]
+        wrist_frames = np.array([frame for frame in wrist_frames])
+        side_frames = np.array([frame for frame in side_frames])
+        fig, ax = plt.subplots(1,2)
+        ax[0].imshow(wrist_frames[0])
+        ax[1].imshow(side_frames[0])
+        plt.show()
+        
 
         time.sleep(0.1)
 

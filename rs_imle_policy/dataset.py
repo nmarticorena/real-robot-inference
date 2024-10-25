@@ -61,11 +61,15 @@ class PolicyDataset(Dataset):
         # Create sample indices
         self.indices = self.create_sample_indices(self.rlds, sequence_length=pred_horizon)
 
+
         # Normalize the data
-        self.normalize_rlds(self.rlds)
+        self.normalize_rlds()
 
         if mode == 'train':
             self.cached_dataset = h5py.File('data/t_block_1/t_block_1.h5', 'r')
+
+        if mode == 'test':
+            self.cached_dataset = h5py.File('../../data/t_block_1/t_block_1.h5', 'r')
 
 
         if self.transform is None:
@@ -116,15 +120,14 @@ class PolicyDataset(Dataset):
                 'robot_pos': X_BE_follower_xy,
                 'action': X_BE_leader_xy,
                 'gello_q': df['gello_q'].tolist(),
-                'robot_q': df['robot_q'].tolist()
-            }
+                'robot_q': df['robot_q'].tolist()}
 
         return rlds
     
-    def normalize_rlds(self, rlds):
-        for episode in rlds.keys():
-            rlds[episode]['robot_pos'] = normalize_data(np.array(rlds[episode]['robot_pos']), self.stats['agent_pos'])
-            rlds[episode]['action'] = normalize_data(np.array(rlds[episode]['action']), self.stats['action'])
+    def normalize_rlds(self):
+        for episode in self.rlds.keys():
+            self.rlds[episode]['robot_pos'] = normalize_data(np.array(self.rlds[episode]['robot_pos']), self.stats['agent_pos'])
+            self.rlds[episode]['action'] = normalize_data(np.array(self.rlds[episode]['action']), self.stats['action'])
         return
 
     def create_sample_indices(self, rlds_dataset, sequence_length=16):

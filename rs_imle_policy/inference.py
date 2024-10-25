@@ -60,19 +60,15 @@ class RobotInferenceController:
         self.move_to_start()
 
     def move_to_start(self):
-        # self.robot.move_to_joints([-1.9953644495495173, -0.07019201069593659, 0.051291523464672376, -2.4943418327817803, -0.042134962130810624, 2.385776886145273, 0.35092161391247345])
         self.robot.move(JointMotion([-1.9953644495495173, -0.07019201069593659, 0.051291523464672376, -2.4943418327817803, -0.042134962130810624, 2.385776886145273, 0.35092161391247345]))
 
 
-    def create_robot(self, ip:str = "172.16.0.2", dynamic_rel: float=0.3):
+    def create_robot(self, ip:str = "172.16.0.2", dynamic_rel: float=0.1):
         # panda = Robot(ip)
-        panda = Robot("172.16.0.2", repeat_on_error=True, dynamic_rel=1.0)
+        panda = Robot(ip, repeat_on_error=True, dynamic_rel=dynamic_rel)
         panda.recover_from_errors()
         panda.accel_rel = 0.1
         panda.jerk_rel = 0.01
-
-        #panda.set_dynamic_rel(dynamic_rel, accel_rel=0.1, jerk_rel=0.01)
-
         return panda
 
     def setup_diffusion_policy(self):
@@ -92,7 +88,6 @@ class RobotInferenceController:
 
         nagent_pos = normalize_data(agent_pos, stats=self.policy.stats['agent_pos'])
 
-
         nimage_side = torch.stack([self.policy.transform(img) for img in image_side])
         nimage_wrist = torch.stack([self.policy.transform(img) for img in image_wrist])
 
@@ -100,7 +95,6 @@ class RobotInferenceController:
         nimage_side = nimage_side.to(self.policy.device, dtype=self.policy.precision)
         nimage_wrist = nimage_wrist.to(self.policy.device, dtype=self.policy.precision)
 
-      
         image_features_side = self.policy.ema_nets['vision_encoder_side'](nimage_side)
         image_features_wrist = self.policy.ema_nets['vision_encoder_wrist'](nimage_wrist)
 
@@ -108,6 +102,7 @@ class RobotInferenceController:
         obs_cond = obs_features.unsqueeze(0).flatten(start_dim=1)
         
         return obs_cond
+    
     
     def get_observation(self):
 
@@ -169,24 +164,15 @@ class RobotInferenceController:
 
 
     def start_inference(self):
-        robot = self.robot
         obs_stream = rx.interval(0.1, scheduler=rx.scheduler.NewThreadScheduler()) \
                     .pipe(ops.map(lambda _: self.get_observation())) \
                     .subscribe(lambda x: self.obs_deque.append(x))  
         
-
-        # current_pose = np.array(self.robot.read_once().O_T_EE)
-        # current_pose = current_pose.reshape(4,4).T
-        # trans_, orien_ = matrix_to_pos_orn(current_pose)
-        #height = trans_[2]
-        #quat = orien_
-      
         current_pose = self.robot.current_pose()
         height = current_pose.translation()[2]
         q = current_pose.quaternion()
         
         # motion = robot.start_impedance_controller(1000, 40, 1)
-
         self.motion = WaypointMotion([Waypoint(current_pose)], return_when_finished=False)
         thread = self.robot.move_async(self.motion)
         done = False
@@ -207,17 +193,12 @@ class RobotInferenceController:
 
                 print(action[i])
 
-                
                 # keep everyting the same except xy which is the action
-
                 trans = np.array([action[i][0], action[i][1], height])
-
-                #motion.set_target(to_affine(trans, orien))
 
                 self.motion.set_next_waypoint(Waypoint(Affine(trans[0], trans[1], height, q[0], q[1], q[2], q[3])))
 
                 # robot_state = motion.get_robot_state()
-                # self.robot_visualiser.object_pose.T = self.obs_deque[-1]["X_BO"]
                 # self.robot_visualiser.policy_pose.T = action[i] 
                 # self.robot_visualiser.step(robot_state.q)
 
@@ -233,8 +214,5 @@ if __name__ == '__main__':
 
 
     controller = RobotInferenceController()
-        
-
     controller.start_inference()
-
     controller.perception_system.stop()
