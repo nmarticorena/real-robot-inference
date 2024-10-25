@@ -131,7 +131,7 @@ def main():
                                              pin_memory=True,
                                              persistent_workers=True)
     
-    policy = Policy(config_file='configs/vision_config.py')
+    policy = Policy(config_file='configs/vision_config')
     nets = policy.nets
     
     train(args, nets, dataloader, policy.noise_scheduler, policy.optimizer, policy.lr_scheduler, policy.ema)
