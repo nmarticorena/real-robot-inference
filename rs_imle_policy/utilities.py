@@ -16,7 +16,7 @@ def get_config(config_file):
     # Get the current script's directory
     script_dir = os.path.dirname(os.path.abspath(__file__))
     # Go one directory up
-    config_file = os.path.join(script_dir, config_file)
+    config_file = os.path.join(script_dir, 'configs', config_file)
     module_name = os.path.basename(config_file).replace('.py', '')
     spec = importlib.util.spec_from_file_location(module_name, config_file)
     config_module = importlib.util.module_from_spec(spec)

@@ -62,7 +62,7 @@ class Policy:
             self.load_weights(saved_run_name)
 
             # stats_path = os.path.join("/mnt/droplet/", 'stats.pkl')
-            stats_path = os.path.join("saved_weights/728_epochs/", 'stats.pkl')
+            stats_path = os.path.join("saved_weights/diffusion_policy_1.0/", 'stats.pkl')
             self.stats = np.load(stats_path, allow_pickle=True)
 
             self.transform = transforms.Compose([
@@ -80,8 +80,8 @@ class Policy:
         # fpath_ema = os.path.join("/mnt/droplet/", "ema_net.pth")
         # fpath_nets = os.path.join("/mnt/droplet/", "net.pth")
 
-        fpath_ema = os.path.join("saved_weights/728_epochs/", "ema_net.pth")
-        fpath_nets = os.path.join("saved_weights/728_epochs/", "net.pth")
+        fpath_ema = os.path.join("saved_weights/diffusion_policy_1.0/", "ema_net.pth")
+        fpath_nets = os.path.join("saved_weights/diffusion_policy_1.0/", "net.pth")
 
 
         state_dict_nets = torch.load(fpath_nets, map_location='cuda')

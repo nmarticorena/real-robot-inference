@@ -63,7 +63,7 @@ class RobotInferenceController:
         self.robot.move(JointMotion([-1.9953644495495173, -0.07019201069593659, 0.051291523464672376, -2.4943418327817803, -0.042134962130810624, 2.385776886145273, 0.35092161391247345]))
 
 
-    def create_robot(self, ip:str = "172.16.0.2", dynamic_rel: float=0.1):
+    def create_robot(self, ip:str = "172.16.0.2", dynamic_rel: float=0.4): #0.4
         # panda = Robot(ip)
         panda = Robot(ip, repeat_on_error=True, dynamic_rel=dynamic_rel)
         panda.recover_from_errors()
@@ -187,7 +187,7 @@ class RobotInferenceController:
             action = out['action']
 
             
-            for i in range(len(action)):
+            for i in range(4,len(action)):
 
                 print(action[i])
 
@@ -201,7 +201,6 @@ class RobotInferenceController:
                 # self.robot_visualiser.step(robot_state.q)
 
                 time.sleep(0.1)
-
 
 
 
