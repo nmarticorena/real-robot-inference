@@ -13,13 +13,10 @@ obs_horizon = 2
 
 device = 'cuda'
 
-
 num_diffusion_iters = 100
 beta_schedule = 'squaredcos_cap_v2'
 clip_sample = True
 prediction_type = 'epsilon'
-
-
 
 lr = 1e-4
 weight_decay = 1e-6

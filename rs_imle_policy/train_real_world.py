@@ -108,8 +108,8 @@ def train(args, nets, dataloader, noise_scheduler, optimizer, lr_scheduler, ema)
 
         ema_nets = copy.deepcopy(nets)
         ema.copy_to(ema_nets.parameters())
-        torch.save(nets.state_dict(), f"saved_weights/net.pth")
-        torch.save(ema_nets.state_dict(), f"saved_weights/ema_net.pth")
+        torch.save(nets.state_dict(), f"saved_weights/net_50p.pth")
+        torch.save(ema_nets.state_dict(), f"saved_weights/ema_net_50p.pth")
 
         avg_loss = np.mean(epoch_loss)
         wandb.log({"avg_train_loss": avg_loss, "epoch": epoch})

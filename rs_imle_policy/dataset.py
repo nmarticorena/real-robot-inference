@@ -133,6 +133,8 @@ class PolicyDataset(Dataset):
     def create_sample_indices(self, rlds_dataset, sequence_length=16):
         indices = []
         for episode in rlds_dataset.keys():
+            if int(episode) > 68:
+                break
             episode_length = len(rlds_dataset[episode]['robot_pos'])
             range_idx = episode_length - (sequence_length + 2)
             for idx in range(range_idx):
