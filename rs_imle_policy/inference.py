@@ -9,7 +9,8 @@ from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
 from diffusers.training_utils import EMAModel
 from diffusers.optimization import get_scheduler
 from tqdm.auto import tqdm
-
+import cv2
+import os
 # env import
 import time
 
@@ -37,7 +38,8 @@ class PerceptionSystem:
     def __init__(self):
         self.cams = MultiRealsense(
             serial_numbers=['123622270136', # wrist
-                            '036422070913'], # side
+                            '036422070913',
+                            '035122250388'], # side
             resolution=(640,480),
             enable_depth=False, 
         )
@@ -45,19 +47,31 @@ class PerceptionSystem:
         self.cams.start()
         self.cams.cameras['123622270136'].set_exposure(exposure=10000.0, gain=16) # d405
         self.cams.cameras['036422070913'].set_exposure(exposure=130.00, gain=13) #d435
+        self.cams.cameras['035122250388'].set_exposure(exposure=70.00, gain=70) #d435
    
     def stop(self):
         self.cams.stop()
 
 
 class RobotInferenceController:
-    def __init__(self):
+    def __init__(self, eval_name, idx):
         
         self.robot = self.create_robot()
         self.perception_system = PerceptionSystem()
         self.perception_system.start()
         self.setup_diffusion_policy()
         self.move_to_start()
+
+        self.eval_name = eval_name
+        self.all_frames = []
+        self.done = False
+        self.idx = str(idx)
+
+        #create folder to save images
+        os.makedirs(f"saved_evaluation_media/{self.eval_name}", exist_ok=True)
+
+
+        
 
     def move_to_start(self):
         self.robot.move(JointMotion([-1.9953644495495173, -0.07019201069593659, 0.051291523464672376, -2.4943418327817803, -0.042134962130810624, 2.385776886145273, 0.35092161391247345]))
@@ -113,6 +127,27 @@ class RobotInferenceController:
         images = self.perception_system.cams.get()
         images_wrist = images[0]['color']
         images_side = images[1]['color']
+        images_top = images[2]['color']
+
+        # save images_top
+        # plt.imsave("images_top.png", images_top)
+
+        self.all_frames.append(images_top)
+
+        cv2.imshow('image', images_top)
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            # write all frames to video
+            save_path = f"saved_evaluation_media/{self.eval_name}/{self.idx}.mp4"
+            out = cv2.VideoWriter(save_path, cv2.VideoWriter_fourcc(*'mp4v'), 10, (640, 480))
+            for frame in self.all_frames:
+                rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)  # Convert BGR to RGB
+                out.write(rgb_frame)
+            out.release()
+            cv2.destroyAllWindows()
+            self.perception_system.stop()
+            self.done = True
+            print("Done")
+
 
         return {"agent_pos": X_BE[:2, 3], 
                 "image_wrist": images_wrist,
@@ -173,11 +208,10 @@ class RobotInferenceController:
         # motion = robot.start_impedance_controller(1000, 40, 1)
         self.motion = WaypointMotion([Waypoint(current_pose)], return_when_finished=False)
         thread = self.robot.move_async(self.motion)
-        done = False
 
         time.sleep(2)
 
-        while not done:
+        while not self.done:
             # wait for obs_deque to have len 2
             while len(self.obs_deque) < self.obs_horizon:
                 time.sleep(0.1)
@@ -188,18 +222,9 @@ class RobotInferenceController:
 
             
             for i in range(4,len(action)):
-
-                print(action[i])
-
                 # keep everyting the same except xy which is the action
                 trans = np.array([action[i][0], action[i][1], height])
-
                 self.motion.set_next_waypoint(Waypoint(Affine(trans[0], trans[1], height, q[0], q[1], q[2], q[3])))
-
-                # robot_state = motion.get_robot_state()
-                # self.robot_visualiser.policy_pose.T = action[i] 
-                # self.robot_visualiser.step(robot_state.q)
-
                 time.sleep(0.1)
 
 
@@ -210,6 +235,6 @@ if __name__ == '__main__':
     
 
 
-    controller = RobotInferenceController()
+    controller = RobotInferenceController(eval_name='diffusion_policy_100p', idx=19)
     controller.start_inference()
     controller.perception_system.stop()
