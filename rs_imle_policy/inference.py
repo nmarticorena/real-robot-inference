@@ -160,28 +160,33 @@ class RobotInferenceController:
 
             obs_cond = self.process_inference_vision(obs_deque)
 
-            # initialize action from Guassian noise
-            noisy_action = torch.randn((1, self.policy.params.pred_horizon, self.policy.params.action_dim), device=self.policy.device, dtype=self.policy.precision)
-            naction = noisy_action
+            if self.method == 'diffusion':
 
-            # init scheduler
-            self.policy.noise_scheduler.set_timesteps(self.policy.params.num_diffusion_iters)
-            # self.noise_scheduler.set_timesteps(20)
+                # initialize action from Guassian noise
+                noisy_action = torch.randn((1, self.policy.params.pred_horizon, self.policy.params.action_dim), device=self.policy.device, dtype=self.policy.precision)
+                naction = noisy_action
+                # init scheduler
+                self.policy.noise_scheduler.set_timesteps(self.policy.params.num_diffusion_iters)
+                # self.noise_scheduler.set_timesteps(20)
 
-            for k in self.policy.noise_scheduler.timesteps:
-                # predict noise
-                noise_pred = self.policy.ema_nets['noise_pred_net'](
-                    sample=naction,
-                    timestep=k,
-                    global_cond=obs_cond
-                )
+                for k in self.policy.noise_scheduler.timesteps:
+                    # predict noise
+                    noise_pred = self.policy.ema_nets['noise_pred_net'](
+                        sample=naction,
+                        timestep=k,
+                        global_cond=obs_cond
+                    )
 
-                # inverse diffusion step (remove noise)
-                naction = self.policy.noise_scheduler.step(
-                    model_output=noise_pred,
-                    timestep=k,
-                    sample=naction
-                ).prev_sample
+                    # inverse diffusion step (remove noise)
+                    naction = self.policy.noise_scheduler.step(
+                        model_output=noise_pred,
+                        timestep=k,
+                        sample=naction
+                    ).prev_sample
+            
+            elif self.method == 'rs_imle':
+                noise = torch.randn((1, self.policy.params.pred_horizon, self.policy.params.action_dim), device=self.policy.params.device)
+                naction = self.policy.nets['generator'](noise, global_cond=obs_cond)
         
         naction = naction.detach().to('cpu').numpy()[0]
 

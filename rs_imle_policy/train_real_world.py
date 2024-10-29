@@ -32,7 +32,7 @@ def parse_args():
     parser.add_argument("--num_eval_episodes", type=int, default=1, help="Number of evaluation episodes")
     parser.add_argument("--method", type=str, choices=['diffusion', 'rs_imle'], default='diffusion', help="Training method")
     parser.add_argument("--n_samples_per_condition", type=int, default=10, help="Number of samples per condition for RS-IMLE")
-    parser.add_argument("--epsilon", type=float, default=0.05, help="Epsilon for RS-IMLE loss")
+    parser.add_argument("--epsilon", type=float, default=0.1, help="Epsilon for RS-IMLE loss")
     parser.add_argument("--use_ema_for_eval", action="store_true", help="Use EMA for evaluation")
     return parser.parse_args()
 
@@ -94,11 +94,18 @@ def train(args, nets, dataloader, noise_scheduler, optimizer, lr_scheduler, ema)
 
                     loss = rs_imle_loss(naction, fake_actions, args.epsilon)
 
-                loss.backward()
-                optimizer.step()
-                optimizer.zero_grad()
-                lr_scheduler.step()
-                ema.step(nets.parameters())
+                # If loss is 0, skip backprop and log flag in wandb
+                if loss == 0:
+                    wandb.log({"zero_loss": 1})
+                else:
+                    loss.backward()
+                    optimizer.step()
+                    optimizer.zero_grad()
+                    lr_scheduler.step()
+                    ema.step(nets.parameters())
+                    wandb.log({"zero_loss": 0})
+
+   
 
                 wandb.log({"loss": loss.item()})
 
@@ -108,12 +115,17 @@ def train(args, nets, dataloader, noise_scheduler, optimizer, lr_scheduler, ema)
 
         ema_nets = copy.deepcopy(nets)
         ema.copy_to(ema_nets.parameters())
-        torch.save(nets.state_dict(), f"saved_weights/net_50p.pth")
-        torch.save(ema_nets.state_dict(), f"saved_weights/ema_net_50p.pth")
+        torch.save(nets.state_dict(), f"saved_weights/net_rs_imle_100p.pth")
+        torch.save(ema_nets.state_dict(), f"saved_weights/ema_net_rs_imle_100p.pth")
 
         avg_loss = np.mean(epoch_loss)
         wandb.log({"avg_train_loss": avg_loss, "epoch": epoch})
         print(f"Epoch {epoch+1}/{args.num_epochs} - Avg. Loss: {avg_loss:.4f} - Time: {time.time()-start_time:.2f}s")
+        # If the loss is 0 for a whole epoch, log flag in wandb
+        if avg_loss == 0:
+            wandb.log({"zero_loss_epoch": 1})
+        else:
+            wandb.log({"zero_loss_epoch": 0})
 
     return
 
@@ -121,6 +133,9 @@ def train(args, nets, dataloader, noise_scheduler, optimizer, lr_scheduler, ema)
 def main():
     args = parse_args()
     wandb.init(project="real_robot_pusht", config=args)
+
+    # change wandb name
+    wandb.run.name = f"{wandb.run.name}_{args.method}_100p"
 
     # dataset = PushTImageDataset(args.dataset_path, args.pred_horizon, args.obs_horizon, args.action_horizon)
     dataset = PolicyDataset(args.dataset_path, args.pred_horizon, args.obs_horizon, args.action_horizon)

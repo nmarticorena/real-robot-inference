@@ -1,7 +1,7 @@
 
 dataset_path = 'data/t_block_1'
 
-method = 'diffusion'
+method = 'rs_imle'
 vision_feature_dim = 512
 lowdim_obs_dim = 2
 obs_dim = (vision_feature_dim*2) + lowdim_obs_dim

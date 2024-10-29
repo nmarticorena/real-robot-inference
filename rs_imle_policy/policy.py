@@ -75,25 +75,34 @@ class Policy:
 
 
     def load_weights(self, saved_run_name, load_best=True):
-        self.ema_nets = copy.deepcopy(self.nets)
 
-        # fpath_ema = os.path.join("/mnt/droplet/", "ema_net.pth")
-        # fpath_nets = os.path.join("/mnt/droplet/", "net.pth")
+        if self.method == 'diffusion':
+            print('Loading pretrained weights for diffusion')
+            self.ema_nets = copy.deepcopy(self.nets)
 
-        fpath_ema = os.path.join("saved_weights/diffusion_policy_1.0/", "ema_net.pth")
-        fpath_nets = os.path.join("saved_weights/diffusion_policy_1.0/", "net.pth")
+            # fpath_ema = os.path.join("/mnt/droplet/", "ema_net.pth")
+            # fpath_nets = os.path.join("/mnt/droplet/", "net.pth")
+
+            fpath_ema = os.path.join("saved_weights/diffusion_policy_1.0/", "ema_net.pth")
+            fpath_nets = os.path.join("saved_weights/diffusion_policy_1.0/", "net.pth")
 
 
-        state_dict_nets = torch.load(fpath_nets, map_location='cuda')
-        self.nets.load_state_dict(state_dict_nets)
-        state_dict_ema = torch.load(fpath_ema, map_location='cuda')
-        self.ema_nets.load_state_dict(state_dict_ema)
+            state_dict_nets = torch.load(fpath_nets, map_location='cuda')
+            self.nets.load_state_dict(state_dict_nets)
+            state_dict_ema = torch.load(fpath_ema, map_location='cuda')
+            self.ema_nets.load_state_dict(state_dict_ema)
 
-        if self.precision == torch.float16:
-            self.nets.half()
-            self.ema_nets.half()
+            if self.precision == torch.float16:
+                self.nets.half()
+                self.ema_nets.half()
 
-        self.ema = EMAModel(parameters=self.ema_nets.parameters(), power=0.75)
+            self.ema = EMAModel(parameters=self.ema_nets.parameters(), power=0.75)
+
+        elif self.method == 'rs_imle':
+            print('Loading pretrained weights for rs_imle')
+            # fpath = os.path.join("/mnt/droplet/", f"saved_weights/net_rs_imle_100p.pth")
+            fpath = os.path.join("saved_weights/rs_imle_policy_1.0/", "net.pth")
+            self.nets.load_state_dict(torch.load(fpath, map_location='cuda'))
 
         print('Pretrained weights loaded.')
 

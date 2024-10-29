@@ -10,18 +10,98 @@ import importlib.util
 import os
 import sys
 
+import matplotlib.pyplot as plt
+from matplotlib.widgets import Slider
+
 
 def get_config(config_file):
     config_file += '.py'
     # Get the current script's directory
     script_dir = os.path.dirname(os.path.abspath(__file__))
     # Go one directory up
-    config_file = os.path.join(script_dir, 'configs', config_file)
+    # config_file = os.path.join(script_dir, 'configs', config_file)
+    config_file = os.path.join(script_dir, config_file)
     module_name = os.path.basename(config_file).replace('.py', '')
     spec = importlib.util.spec_from_file_location(module_name, config_file)
     config_module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(config_module)
     return config_module
+
+
+
+def adjust_hsv_ranges(image_path):
+    # Load the image and convert to HSV
+    img = cv2.imread(image_path)
+    img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)  # Convert to RGB for matplotlib
+    hsv_img = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+
+    # Initial HSV ranges
+    hsv_ranges = {
+        'H_low': 0, 'H_high': 255,
+        'S_low': 130, 'S_high': 216,
+        'V_low': 150, 'V_high': 230
+    }
+
+    # Create figure and axis
+    fig, ax = plt.subplots()
+    plt.subplots_adjust(left=0.25, bottom=0.4)
+    mask = cv2.inRange(hsv_img, 
+                       (hsv_ranges['H_low'], hsv_ranges['S_low'], hsv_ranges['V_low']), 
+                       (hsv_ranges['H_high'], hsv_ranges['S_high'], hsv_ranges['V_high']))
+    result = cv2.bitwise_and(img_rgb, img_rgb, mask=mask)
+    masked_img = ax.imshow(result)
+
+    # Define slider axes
+    axcolor = 'lightgoldenrodyellow'
+    ax_h_low = plt.axes([0.25, 0.3, 0.65, 0.03], facecolor=axcolor)
+    ax_h_high = plt.axes([0.25, 0.25, 0.65, 0.03], facecolor=axcolor)
+    ax_s_low = plt.axes([0.25, 0.2, 0.65, 0.03], facecolor=axcolor)
+    ax_s_high = plt.axes([0.25, 0.15, 0.65, 0.03], facecolor=axcolor)
+    ax_v_low = plt.axes([0.25, 0.1, 0.65, 0.03], facecolor=axcolor)
+    ax_v_high = plt.axes([0.25, 0.05, 0.65, 0.03], facecolor=axcolor)
+
+    # Create sliders
+    s_h_low = Slider(ax_h_low, 'H Low', 0, 255, valinit=hsv_ranges['H_low'], valstep=1)
+    s_h_high = Slider(ax_h_high, 'H High', 0, 255, valinit=hsv_ranges['H_high'], valstep=1)
+    s_s_low = Slider(ax_s_low, 'S Low', 0, 255, valinit=hsv_ranges['S_low'], valstep=1)
+    s_s_high = Slider(ax_s_high, 'S High', 0, 255, valinit=hsv_ranges['S_high'], valstep=1)
+    s_v_low = Slider(ax_v_low, 'V Low', 0, 255, valinit=hsv_ranges['V_low'], valstep=1)
+    s_v_high = Slider(ax_v_high, 'V High', 0, 255, valinit=hsv_ranges['V_high'], valstep=1)
+
+    # Update function for sliders
+    def update(val):
+        # Get current slider values
+        h_low = s_h_low.val
+        h_high = s_h_high.val
+        s_low = s_s_low.val
+        s_high = s_s_high.val
+        v_low = s_v_low.val
+        v_high = s_v_high.val
+
+        # Create new mask and update the displayed image
+        lower_bound = np.array([h_low, s_low, v_low])
+        upper_bound = np.array([h_high, s_high, v_high])
+        mask = cv2.inRange(hsv_img, lower_bound, upper_bound)
+        result = cv2.bitwise_and(img_rgb, img_rgb, mask=mask)
+        masked_img.set_data(result)
+        fig.canvas.draw_idle()
+
+    # Connect update function to sliders
+    s_h_low.on_changed(update)
+    s_h_high.on_changed(update)
+    s_s_low.on_changed(update)
+    s_s_high.on_changed(update)
+    s_v_low.on_changed(update)
+    s_v_high.on_changed(update)
+
+    # Show the plot
+    plt.show()
+
+    # Print final HSV values after closing the plot
+    print(f"Final HSV Ranges: H:({s_h_low.val}, {s_h_high.val}), S:({s_s_low.val}, {s_s_high.val}), V:({s_v_low.val}, {s_v_high.val})")
+
+
+
 
 
 def cache_pims_video(dataset_path):
@@ -55,4 +135,8 @@ def cache_pims_video(dataset_path):
 
 
 if __name__ == "__main__":
-    cache_pims_video('data/t_block_1')
+    #cache_pims_video('data/t_block_1')
+
+    # Example usage
+    image_path = './evaluation/target_mask.png'
+    adjust_hsv_ranges(image_path)
