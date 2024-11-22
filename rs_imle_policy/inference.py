@@ -56,6 +56,7 @@ class PerceptionSystem:
 class RobotInferenceController:
     def __init__(self, eval_name, idx):
         
+        self.seed(42)
         self.robot = self.create_robot()
         self.perception_system = PerceptionSystem()
         self.perception_system.start()
@@ -70,8 +71,13 @@ class RobotInferenceController:
         #create folder to save images
         os.makedirs(f"saved_evaluation_media/{self.eval_name}", exist_ok=True)
 
+    
+    def seed(self, seed):
+        torch.manual_seed(seed)
+        np.random.seed(seed)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
 
-        
 
     def move_to_start(self):
         self.robot.move(JointMotion([-1.9953644495495173, -0.07019201069593659, 0.051291523464672376, -2.4943418327817803, -0.042134962130810624, 2.385776886145273, 0.35092161391247345]))
@@ -109,8 +115,12 @@ class RobotInferenceController:
         nimage_side = nimage_side.to(self.policy.device, dtype=self.policy.precision)
         nimage_wrist = nimage_wrist.to(self.policy.device, dtype=self.policy.precision)
 
-        image_features_side = self.policy.ema_nets['vision_encoder_side'](nimage_side)
-        image_features_wrist = self.policy.ema_nets['vision_encoder_wrist'](nimage_wrist)
+        if self.policy.params.method == 'diffusion':
+            image_features_side = self.policy.ema_nets['vision_encoder_side'](nimage_side)
+            image_features_wrist = self.policy.ema_nets['vision_encoder_wrist'](nimage_wrist)
+        elif self.policy.params.method == 'rs_imle':
+            image_features_side = self.policy.nets['vision_encoder_side'](nimage_side)
+            image_features_wrist = self.policy.nets['vision_encoder_wrist'](nimage_wrist)
 
         obs_features = torch.cat([image_features_side, image_features_wrist, nagent_pos], dim=-1)                
         obs_cond = obs_features.unsqueeze(0).flatten(start_dim=1)
@@ -160,7 +170,7 @@ class RobotInferenceController:
 
             obs_cond = self.process_inference_vision(obs_deque)
 
-            if self.method == 'diffusion':
+            if self.policy.params.method == 'diffusion':
 
                 # initialize action from Guassian noise
                 noisy_action = torch.randn((1, self.policy.params.pred_horizon, self.policy.params.action_dim), device=self.policy.device, dtype=self.policy.precision)
@@ -184,8 +194,10 @@ class RobotInferenceController:
                         sample=naction
                     ).prev_sample
             
-            elif self.method == 'rs_imle':
+            elif self.policy.params.method == 'rs_imle':
                 noise = torch.randn((1, self.policy.params.pred_horizon, self.policy.params.action_dim), device=self.policy.params.device)
+                # clip noise
+                noise = torch.clamp(noise, -1, 1)
                 naction = self.policy.nets['generator'](noise, global_cond=obs_cond)
         
         naction = naction.detach().to('cpu').numpy()[0]
@@ -214,6 +226,8 @@ class RobotInferenceController:
         self.motion = WaypointMotion([Waypoint(current_pose)], return_when_finished=False)
         thread = self.robot.move_async(self.motion)
 
+        start_time = time.time()    
+
         time.sleep(2)
 
         while not self.done:
@@ -225,8 +239,10 @@ class RobotInferenceController:
             out = self.infer_action(self.obs_deque.copy())
             action = out['action']
 
+            print("elapsed time: ", time.time() - start_time)
+
             
-            for i in range(4,len(action)):
+            for i in range(0,len(action)):
                 # keep everyting the same except xy which is the action
                 trans = np.array([action[i][0], action[i][1], height])
                 self.motion.set_next_waypoint(Waypoint(Affine(trans[0], trans[1], height, q[0], q[1], q[2], q[3])))
@@ -240,6 +256,6 @@ if __name__ == '__main__':
     
 
 
-    controller = RobotInferenceController(eval_name='diffusion_policy_100p', idx=19)
+    controller = RobotInferenceController(eval_name='rs_imle_25p_ckpt600_2', idx=3)
     controller.start_inference()
     controller.perception_system.stop()
