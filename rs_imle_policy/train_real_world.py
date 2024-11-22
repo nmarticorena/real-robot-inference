@@ -14,6 +14,7 @@ import copy
 import pdb
 import time
 from policy import Policy
+import os
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Train a model for robotic pushing")
@@ -57,6 +58,13 @@ def rs_imle_loss(real_samples, fake_samples, epsilon=0.1):
 
 def train(args, nets, dataloader, noise_scheduler, optimizer, lr_scheduler, ema):
     nets.train()
+
+    # make dir if not exist
+    # os.makedirs("saved_weights/rs_imle_25p", exist_ok=True)
+    os.makedirs("saved_weights/diffusion_25p", exist_ok=True)
+
+
+
     for epoch in range(args.num_epochs):
         epoch_loss = []
         start_time = time.time()
@@ -115,8 +123,13 @@ def train(args, nets, dataloader, noise_scheduler, optimizer, lr_scheduler, ema)
 
         ema_nets = copy.deepcopy(nets)
         ema.copy_to(ema_nets.parameters())
-        torch.save(nets.state_dict(), f"saved_weights/net_rs_imle_100p.pth")
-        torch.save(ema_nets.state_dict(), f"saved_weights/ema_net_rs_imle_100p.pth")
+        # torch.save(nets.state_dict(), f"saved_weights/net_rs_imle_100p.pth")
+        # torch.save(ema_nets.state_dict(), f"saved_weights/ema_net_rs_imle_100p.pth")
+
+        # save a checkpoint every 10 epochs
+        if (epoch) % 10 == 0:
+            torch.save(nets.state_dict(), f"saved_weights/diffusion_25p/net_epoch_{epoch}.pth")
+            torch.save(ema_nets.state_dict(), f"saved_weights/diffusion_25p/ema_net_epoch_{epoch}.pth")
 
         avg_loss = np.mean(epoch_loss)
         wandb.log({"avg_train_loss": avg_loss, "epoch": epoch})
@@ -135,7 +148,7 @@ def main():
     wandb.init(project="real_robot_pusht", config=args)
 
     # change wandb name
-    wandb.run.name = f"{wandb.run.name}_{args.method}_100p"
+    wandb.run.name = f"{wandb.run.name}_{args.method}_25p"
 
     # dataset = PushTImageDataset(args.dataset_path, args.pred_horizon, args.obs_horizon, args.action_horizon)
     dataset = PolicyDataset(args.dataset_path, args.pred_horizon, args.obs_horizon, args.action_horizon)
