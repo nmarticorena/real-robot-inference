@@ -80,7 +80,8 @@ class RobotInferenceController:
 
 
     def move_to_start(self):
-        self.robot.move(JointMotion([-1.9953644495495173, -0.07019201069593659, 0.051291523464672376, -2.4943418327817803, -0.042134962130810624, 2.385776886145273, 0.35092161391247345]))
+        # self.robot.move(JointMotion([-1.9953644495495173, -0.07019201069593659, 0.051291523464672376, -2.4943418327817803, -0.042134962130810624, 2.385776886145273, 0.35092161391247345]))
+        self.robot.move(JointMotion([-1.4257584505685634, -0.302815655026201, 0.05126683842989545, -2.7415479229025443, 0.011030055865001531, 2.3881221201502796, 0.8777110836404692]))
 
 
     def create_robot(self, ip:str = "172.16.0.2", dynamic_rel: float=0.4): #0.4
@@ -241,8 +242,12 @@ class RobotInferenceController:
 
             print("elapsed time: ", time.time() - start_time)
 
+            # if time.time() - start_time > 120:
+            #     print("Time limit reached")
+            #     break
+
             
-            for i in range(0,len(action)):
+            for i in range(4,len(action)):
                 # keep everyting the same except xy which is the action
                 trans = np.array([action[i][0], action[i][1], height])
                 self.motion.set_next_waypoint(Waypoint(Affine(trans[0], trans[1], height, q[0], q[1], q[2], q[3])))
@@ -256,6 +261,6 @@ if __name__ == '__main__':
     
 
 
-    controller = RobotInferenceController(eval_name='rs_imle_25p_ckpt600_2', idx=3)
+    controller = RobotInferenceController(eval_name='rs_imle_policy_10', idx=0)
     controller.start_inference()
     controller.perception_system.stop()

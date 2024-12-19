@@ -62,7 +62,7 @@ class Policy:
             self.load_weights(saved_run_name)
 
             # stats_path = os.path.join("/mnt/droplet/", 'stats.pkl')
-            stats_path = os.path.join("saved_weights/diffusion_policy_1.0/", 'stats.pkl')
+            stats_path = os.path.join("saved_weights/rs_imle_10/", 'stats.pkl')
             self.stats = np.load(stats_path, allow_pickle=True)
 
             self.transform = transforms.Compose([
@@ -83,7 +83,7 @@ class Policy:
             # fpath_ema = os.path.join("/mnt/droplet/", "ema_net.pth")
             # fpath_nets = os.path.join("/mnt/droplet/", "net.pth")
 
-            fpath_ema = os.path.join("saved_weights/diffusion_policy_1.0/", "ema_net.pth")
+            fpath_ema = os.path.join("saved_weights/diffusion_policy_10/", "ema_net_epoch_1000.pth")
             # fpath_nets = os.path.join("saved_weights/diffusion_policy_1.0/", "net.pth")
 
 
@@ -100,7 +100,7 @@ class Policy:
 
         elif self.method == 'rs_imle':
             print('Loading pretrained weights for rs_imle')
-            fpath = os.path.join("saved_weights/rs_imle_policy_0.25/", "net_epoch_300.pth")
+            fpath = os.path.join("saved_weights/rs_imle_10/", "net_epoch_1100.pth")
             # fpath = os.path.join("saved_weights/rs_imle_policy_0.25/", "net_epoch_600.pth")
             self.nets.load_state_dict(torch.load(fpath, map_location='cuda'))
 
