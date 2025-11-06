@@ -1,12 +1,7 @@
 
-dataset_path = 'data/t_block_1'
+dataset_path = '/media/nmarticorena/DATA/imitation_learning/001_EdmondDemos/pickplacetest'
 
-<<<<<<< HEAD
 method = 'rs_imle'
-# method = 'diffusion'
-=======
-method = 'diffusion'
->>>>>>> 07c00bd9c90c84345cd38a008b19c05f9265f9e5
 vision_feature_dim = 512
 lowdim_obs_dim = 2
 obs_dim = (vision_feature_dim*2) + lowdim_obs_dim
