@@ -4,11 +4,11 @@ import pims
 import numpy as np
 import h5py
 import cv2
-import pdb
 import matplotlib.pyplot as plt
 import importlib.util
 import os
-import sys
+import torch
+import torch.nn.functional as F
 
 import matplotlib.pyplot as plt
 from matplotlib.widgets import Slider
@@ -27,8 +27,6 @@ def get_config(config_file):
     spec.loader.exec_module(config_module)
     return config_module
 
-
-
 def adjust_hsv_ranges(image_path):
     # Load the image and convert to HSV
     img = cv2.imread(image_path)
@@ -45,8 +43,8 @@ def adjust_hsv_ranges(image_path):
     # Create figure and axis
     fig, ax = plt.subplots()
     plt.subplots_adjust(left=0.25, bottom=0.4)
-    mask = cv2.inRange(hsv_img, 
-                       (hsv_ranges['H_low'], hsv_ranges['S_low'], hsv_ranges['V_low']), 
+    mask = cv2.inRange(hsv_img,
+                       (hsv_ranges['H_low'], hsv_ranges['S_low'], hsv_ranges['V_low']),
                        (hsv_ranges['H_high'], hsv_ranges['S_high'], hsv_ranges['V_high']))
     result = cv2.bitwise_and(img_rgb, img_rgb, mask=mask)
     masked_img = ax.imshow(result)
@@ -100,10 +98,6 @@ def adjust_hsv_ranges(image_path):
     # Print final HSV values after closing the plot
     print(f"Final HSV Ranges: H:({s_h_low.val}, {s_h_high.val}), S:({s_s_low.val}, {s_s_high.val}), V:({s_v_low.val}, {s_v_high.val})")
 
-
-
-
-
 def cache_pims_video(dataset_path):
     # Open an HDF5 file in write mode
     with h5py.File('t_block_1.h5', 'w') as h5f:
@@ -132,6 +126,59 @@ def cache_pims_video(dataset_path):
             grp.create_dataset('side', data=side_frames, compression="gzip", chunks=chunk_size)
 
     print("Video data saved to video_data.h5")
+
+def extract_robot_pos_orien(poses):
+    xyz = []
+    oriens = []
+    for pose in poses:
+        pose = np.array(pose)
+        xyz.append(pose[:3, 3])
+        rot = pose[:3, :3]
+        oriens.append(matrix_to_rotation_6d(rot))
+    return xyz, oriens
+
+def matrix_to_rotation_6d(matrix: torch.Tensor) -> torch.Tensor:
+    """
+    Converts rotation matrices to 6D rotation representation by Zhou et al. [1]
+    by dropping the last row. Note that 6D representation is not unique.
+    Args:
+        matrix: batch of rotation matrices of size (*, 3, 3)
+
+    Returns:
+        6D rotation representation, of size (*, 6)
+
+    [1] Zhou, Y., Barnes, C., Lu, J., Yang, J., & Li, H.
+    On the Continuity of Rotation Representations in Neural Networks.
+    IEEE Conference on Computer Vision and Pattern Recognition, 2019.
+    Retrieved from http://arxiv.org/abs/1812.07035
+    """
+    if not isinstance(matrix, torch.Tensor):
+        matrix = torch.tensor(matrix)
+
+    batch_dim = matrix.size()[:-2]
+    return matrix[..., :2, :].clone().reshape(batch_dim + (6,))
+
+def rotation_6d_to_matrix(d6: torch.Tensor) -> torch.Tensor:
+    """
+    Converts 6D rotation representation by Zhou et al. [1] to rotation matrix
+    using Gram--Schmidt orthogonalization per Section B of [1].
+    Args:
+        d6: 6D rotation representation, of size (*, 6)
+
+    Returns:
+        batch of rotation matrices of size (*, 3, 3)
+
+    [1] Zhou, Y., Barnes, C., Lu, J., Yang, J., & Li, H.
+    On the Continuity of Rotation Representations in Neural Networks.
+    IEEE Conference on Computer Vision and Pattern Recognition, 2019.
+    Retrieved from http://arxiv.org/abs/1812.07035
+    """
+    a1, a2 = d6[..., :3], d6[..., 3:]
+    b1 = F.normalize(a1, dim=-1)
+    b2 = a2 - (b1 * a2).sum(-1, keepdim=True) * b1
+    b2 = F.normalize(b2, dim=-1)
+    b3 = torch.cross(b1, b2, dim=-1)
+    return torch.stack((b1, b2, b3), dim=-2)
 
 
 if __name__ == "__main__":
