@@ -19,6 +19,7 @@ import os
 def parse_args():
     parser = argparse.ArgumentParser(description="Train a model for robotic pushing")
     parser.add_argument("--dataset_path", type=str, default="data/t_block_1", help="Path to the dataset")
+    parser.add_argument("--task_name", type = str, default = "default", help = "Name of the task")
     parser.add_argument("--pred_horizon", type=int, default=16, help="Prediction horizon")
     parser.add_argument("--obs_horizon", type=int, default=2, help="Observation horizon")
     parser.add_argument("--action_horizon", type=int, default=8, help="Action horizon")
@@ -59,9 +60,10 @@ def rs_imle_loss(real_samples, fake_samples, epsilon=0.1):
 def train(args, nets, dataloader, noise_scheduler, optimizer, lr_scheduler, ema):
     nets.train()
 
+    folder = os.path.join("saved_weights",args.task_name, args.method + "_25p")
+    os.makedirs(folder, exist_ok=True)
+
     # make dir if not exist
-    # os.makedirs("saved_weights/rs_imle_25p", exist_ok=True)
-    os.makedirs("saved_weights/diffusion_25p", exist_ok=True)
 
 
 
@@ -123,13 +125,11 @@ def train(args, nets, dataloader, noise_scheduler, optimizer, lr_scheduler, ema)
 
         ema_nets = copy.deepcopy(nets)
         ema.copy_to(ema_nets.parameters())
-        # torch.save(nets.state_dict(), f"saved_weights/net_rs_imle_100p.pth")
-        # torch.save(ema_nets.state_dict(), f"saved_weights/ema_net_rs_imle_100p.pth")
 
         # save a checkpoint every 10 epochs
         if (epoch) % 10 == 0:
-            torch.save(nets.state_dict(), f"saved_weights/diffusion_25p/net_epoch_{epoch}.pth")
-            torch.save(ema_nets.state_dict(), f"saved_weights/diffusion_25p/ema_net_epoch_{epoch}.pth")
+            torch.save(nets.state_dict(), f"{folder}/net_epoch_{epoch}.pth")
+            torch.save(ema_nets.state_dict(), f"{folder}/ema_net_epoch_{epoch}.pth")
 
         avg_loss = np.mean(epoch_loss)
         wandb.log({"avg_train_loss": avg_loss, "epoch": epoch})
@@ -145,7 +145,7 @@ def train(args, nets, dataloader, noise_scheduler, optimizer, lr_scheduler, ema)
 
 def main():
     args = parse_args()
-    wandb.init(project="real_robot_pusht", config=args)
+    wandb.init(project=args.task_name, config=args)
 
     # change wandb name
     wandb.run.name = f"{wandb.run.name}_{args.method}_25p"
