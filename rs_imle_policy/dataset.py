@@ -15,6 +15,9 @@ import torchvision
 import h5py
 import pickle as pkl
 
+import rs_imle_policy.utilities as utils
+import spatialmath as sm
+
 # Helper function to get normalization stats
 def get_data_stats(data):
     stats = {
@@ -46,12 +49,25 @@ class PolicyDataset(Dataset):
         self.transform = transform
         self.robot = rtb.models.Panda()
 
+        # tranform to finray tcp
+        X_FE = np.array(
+            [
+                [0.70710678, 0.70710678, 0.0, 0.0],
+                [-0.70710678, 0.70710678, 0, 0],
+                [0.0, 0.0, 1.0, 0.2],
+                [0.0, 0.0, 0.0, 1.0],
+            ]
+        )
+        self.X_FE = sm.SE3(X_FE, check=False).norm()
+
+
         # Load all episodes and create sample indices
         self.rlds = self.create_rlds_dataset()
         # Store video paths
         self.video_paths = self.get_video_paths()
         # Compute statistics for normalization
-        self.stats = {'agent_pos': None, 'action': None}
+        # self.stats = {'agent_pos': None, 'action': None} # TODO: Replace with defaultdict
+        self.stats = {}
         self.compute_normalization_stats()
 
         # save stats
@@ -65,11 +81,11 @@ class PolicyDataset(Dataset):
         # Normalize the data
         self.normalize_rlds()
 
-        if mode == 'train':
-            self.cached_dataset = h5py.File('data/t_block_1/t_block_1.h5', 'r')
+        # if mode == 'train':
+        self.cached_dataset = h5py.File(f'{self.dataset_path}/images.h5', 'r')
 
-        if mode == 'test':
-            self.cached_dataset = h5py.File('../../data/t_block_1/t_block_1.h5', 'r')
+        # if mode == 'test':
+            # self.cached_dataset = h5py.File('../../data/t_block_1/t_block_1.h5', 'r')
 
 
         if self.transform is None:
@@ -77,7 +93,7 @@ class PolicyDataset(Dataset):
                             transforms.ToPILImage(),
                             transforms.RandomCrop((216, 288)),
                             transforms.ToTensor()])
-            
+
 
     def get_video_paths(self):
         video_paths = {}
@@ -94,8 +110,8 @@ class PolicyDataset(Dataset):
             }
             video_paths[int(episode)] = all_videos
         return video_paths
-    
-    
+
+
     def create_rlds_dataset(self):
         rlds = {}
         episodes = sorted(os.listdir(os.path.join(self.dataset_path, "episodes")), key=lambda x: int(x))
@@ -110,24 +126,33 @@ class PolicyDataset(Dataset):
             df['idx'] = range(len(df))
 
             X_BE_follower = df['X_BE'].tolist()
-            X_BE_leader = [(self.robot.fkine(np.array(q), "panda_link8")).A for q in df['gello_q']]
+            X_BE_leader = [(self.robot.fkine(np.array(q), "panda_link8")).A * self.X_FE for q in df['gello_q']]
 
-            # Extract only xy coordinates from the 4x4 matrix
-            X_BE_follower_xy = [np.array(x)[:2, 3] for x in X_BE_follower]
-            X_BE_leader_xy = [np.array(x)[:2, 3] for x in X_BE_leader]
+            X_BE_follower = [np.array(x).T for x in X_BE_follower] # TODO: Remove this patch
+
+            X_BE_follower_pos, X_BE_follower_orien = utils.extract_robot_pos_orien(X_BE_follower)
+            X_BE_leader_pos, X_BE_leader_orien = utils.extract_robot_pos_orien(X_BE_leader)
 
             rlds[episode_index] = {
-                'robot_pos': X_BE_follower_xy,
-                'action': X_BE_leader_xy,
+                'robot_pos': X_BE_follower_pos,
+                'robot_orien': X_BE_follower_orien,
+                'action_orien': X_BE_leader_orien,
+                'action_pos': X_BE_leader_pos,
+                'X_BE': X_BE_follower,
                 'gello_q': df['gello_q'].tolist(),
-                'robot_q': df['robot_q'].tolist()}
-
+                'robot_q': df['robot_q'].tolist()
+            }
         return rlds
-    
+
     def normalize_rlds(self):
         for episode in self.rlds.keys():
-            self.rlds[episode]['robot_pos'] = normalize_data(np.array(self.rlds[episode]['robot_pos']), self.stats['agent_pos'])
-            self.rlds[episode]['action'] = normalize_data(np.array(self.rlds[episode]['action']), self.stats['action'])
+            self.rlds[episode]['robot_pos'] = normalize_data(np.array(self.rlds[episode]['robot_pos']), self.stats['robot_pos'])
+            self.rlds[episode]['robot_orien'] = normalize_data(np.array(self.rlds[episode]['robot_orien']), self.stats['robot_orien'])
+            #self.rlds[episode]['robot_gripper'] = normalize_data(np.array(self.rlds[episode['gripper_pos']]), self.stats['agent_gripper_pos'])
+
+            self.rlds[episode]['action_pos'] = normalize_data(np.array(self.rlds[episode]['action_pos']), self.stats['action_pos'])
+            self.rlds[episode]['action_orien'] = normalize_data(np.array(self.rlds[episode]['action_orien']), self.stats['action_orien'])
+            # self.rlds[episode]['action_gripper'] = normalize_data(np.array(self.rlds[episode]['action_gripper']), self.stats['action_gripper'])
         return
 
     def create_sample_indices(self, rlds_dataset, sequence_length=16):
@@ -146,26 +171,36 @@ class PolicyDataset(Dataset):
         return indices
 
     def compute_normalization_stats(self):
-        agent_pos_data = np.concatenate([np.array(self.rlds[episode]['robot_pos']) for episode in self.rlds.keys()], axis=0)
-        action_data = np.concatenate([np.array(self.rlds[episode]['action']) for episode in self.rlds.keys()], axis=0)
+        def get_data(key: str):
+            data = np.concatenate([np.array(self.rlds[episode][key]) for episode in self.rlds.keys()], axis = 0)
+            self.stats[key] = get_data_stats(data)
 
-        self.stats['agent_pos'] = get_data_stats(agent_pos_data)
-        self.stats['action'] = get_data_stats(action_data)
+        get_data("robot_pos")
+        get_data("robot_orien")
+        get_data("action_pos")
+        get_data("action_orien")
+
+
 
     def sample_sequence(self, episode, buffer_start_idx, buffer_end_idx):
         agent_pos = self.rlds[episode]['robot_pos'][buffer_start_idx:buffer_end_idx]
-        # action = self.rlds[episode]['action'][buffer_start_idx:buffer_end_idx]
-        action = self.rlds[episode]['robot_pos'][buffer_start_idx+1:buffer_end_idx+1]
+        agent_orien = self.rlds[episode]['robot_orien'][buffer_start_idx:buffer_end_idx]
+
+        action_pos = self.rlds[episode]['robot_pos'][buffer_start_idx+1:buffer_end_idx+1]
+        action_orien = self.rlds[episode]['robot_orien'][buffer_start_idx+1:buffer_end_idx+1]
         frames = self.read_video_frames(episode, buffer_start_idx, buffer_end_idx)
 
+        robot_state = np.concatenate([agent_pos, agent_orien], axis=-1)
+        robot_action = np.concatenate([action_pos, action_orien], axis=-1)
+
         seq = {
-            'agent_pos': np.array(agent_pos),
-            'action': np.array(action),
+            'state': robot_state,
+            'action': robot_action,
             'frames': frames
         }
         return seq
 
-    
+
     def read_video_frames(self, episode, start_frame, end_frame):
         frames = {}
         video = self.cached_dataset[str(episode)]
@@ -177,16 +212,16 @@ class PolicyDataset(Dataset):
         frames['side']  = np.array([self.transform(frame) for frame in side_frames])
 
         return frames
-    
+
     def __len__(self):
         return len(self.indices)
-    
+
     def visualize_images_in_row(self, tensor):
         # Ensure the input tensor is in the right shape
         assert tensor.shape == (16, 3, 216, 288), "Tensor should have shape (16, 3, 216, 288)"
-        
+
         # Create a grid of images in a single row
-        grid_img = torchvision.utils.make_grid(tensor, nrow=16)  # Arrange 16 images in a single row      
+        grid_img = torchvision.utils.make_grid(tensor, nrow=16)  # Arrange 16 images in a single row
         # Convert the tensor to a numpy array for displaying
         plt.figure(figsize=(20, 5))  # Adjust figure size if necessary
         plt.imshow(grid_img.permute(1, 2, 0).cpu().numpy())  # Permute to get (H, W, C) for display
@@ -197,33 +232,31 @@ class PolicyDataset(Dataset):
         episode, buffer_start_idx, buffer_end_idx = self.indices[idx]
         seq = self.sample_sequence(episode, buffer_start_idx, buffer_end_idx)
 
-        agent_pos = seq['agent_pos']
-        action = seq['action']
         frames = seq['frames']
 
         # Convert to tensors
-        agent_pos = torch.tensor(agent_pos, dtype=torch.float32)
-        action = torch.tensor(action, dtype=torch.float32)
+        state = torch.tensor(seq['state'], dtype=torch.float32)
+        action = torch.tensor(seq['action'], dtype=torch.float32)
         frames_wrist = frames['wrist']
         frames_side = frames['side']
 
         # self.visualize_images_in_row(frames_wrist)
-        
+
         # discard unused observations
-        agent_pos = agent_pos[:self.obs_horizon]
+        state = state[:self.obs_horizon]
 
         return {
-            'agent_pos': agent_pos,
+            'state': state,
             'action': action,
             'frames_wrist': frames_wrist,
             'frames_side': frames_side
         }
-    
+
 
 
 if __name__ == '__main__':
     dataset = PolicyDataset('data/t_block_1', pred_horizon=16, obs_horizon=2, action_horizon=8)
-    
+
     idx=0
     while True:
         start_time = time.time()
