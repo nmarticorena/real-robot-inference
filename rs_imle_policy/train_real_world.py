@@ -72,12 +72,12 @@ def train(args, nets, dataloader, noise_scheduler, optimizer, lr_scheduler, ema)
         start_time = time.time()
         with tqdm(dataloader, desc=f'Epoch {epoch+1}/{args.num_epochs}', leave=False) as tepoch:
             for batch in tepoch:
-                
                 nimage_side = batch['frames_side'][:,:args.obs_horizon].to(args.device)
                 nimage_wrist = batch['frames_wrist'][:,:args.obs_horizon].to(args.device)
-                nagent_pos = batch['agent_pos'][:,:args.obs_horizon].to(args.device)
-                naction = batch['action'].to(args.device)
-                B = nagent_pos.shape[0]
+                nagent = batch['state'][:,:args.obs_horizon].to(args.device)
+
+                naction = batch['action'] .to(args.device)
+                B = naction.shape[0]
 
                 image_features_side = nets['vision_encoder_side'](nimage_side.flatten(end_dim=1))
                 image_features_side = image_features_side.reshape(*nimage_side.shape[:2],-1)
@@ -85,10 +85,11 @@ def train(args, nets, dataloader, noise_scheduler, optimizer, lr_scheduler, ema)
                 image_features_wrist = nets['vision_encoder_wrist'](nimage_wrist.flatten(end_dim=1))
                 image_features_wrist = image_features_wrist.reshape(*nimage_wrist.shape[:2],-1)
 
-                obs_features = torch.cat([image_features_side, image_features_wrist, nagent_pos], dim=-1)                
+                obs_features = torch.cat([image_features_side, image_features_wrist, nagent], dim=-1)
                 obs_cond = obs_features.flatten(start_dim=1)
 
                 if args.method == 'diffusion':
+                    print("Using diffusion loss")
                     noise = torch.randn(naction.shape, device=args.device)
                     timesteps = torch.randint(0, noise_scheduler.config.num_train_timesteps, (B,), device=args.device).long()
                     noisy_actions = noise_scheduler.add_noise(naction, noise, timesteps)
@@ -115,7 +116,7 @@ def train(args, nets, dataloader, noise_scheduler, optimizer, lr_scheduler, ema)
                     ema.step(nets.parameters())
                     wandb.log({"zero_loss": 0})
 
-   
+
 
                 wandb.log({"loss": loss.item()})
 
@@ -150,20 +151,19 @@ def main():
     # change wandb name
     wandb.run.name = f"{wandb.run.name}_{args.method}_25p"
 
-    # dataset = PushTImageDataset(args.dataset_path, args.pred_horizon, args.obs_horizon, args.action_horizon)
     dataset = PolicyDataset(args.dataset_path, args.pred_horizon, args.obs_horizon, args.action_horizon)
     # dataset = FilteredDatasetWrapper(dataset, 0.1)
-    dataloader = torch.utils.data.DataLoader(dataset, batch_size=args.batch_size, 
-                                             num_workers=args.num_workers, 
-                                             shuffle=True, 
+    dataloader = torch.utils.data.DataLoader(dataset, batch_size=args.batch_size,
+                                             num_workers=args.num_workers,
+                                             shuffle=True,
                                              pin_memory=True,
-                                             persistent_workers=True)
-    
-    policy = Policy(config_file='configs/vision_config')
+                                             persistent_workers= False)
+
+    policy = Policy(config_file='pick_place_config')
     nets = policy.nets
-    
+
     train(args, nets, dataloader, policy.noise_scheduler, policy.optimizer, policy.lr_scheduler, policy.ema)
-    
+
     wandb.finish()
 
 if __name__ == "__main__":
