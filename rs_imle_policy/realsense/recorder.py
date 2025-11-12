@@ -3,7 +3,6 @@ import numpy as np
 import subprocess as sp
 import shlex
 import pdb
-import matplotlib.pyplot as plt
 
 class VideoRecorder:
     # hevc_nvenc_counter: int = 0
