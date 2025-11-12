@@ -16,6 +16,7 @@ import time
 
 from rs_imle_policy.policy import Policy
 from rs_imle_policy.dataset import normalize_data, unnormalize_data
+import rs_imle_policy.utilities as utils
 
 import numpy as np
 import time
@@ -24,7 +25,6 @@ import reactivex as rx
 from reactivex import operators as ops
 
 # from diffrobot.robot.robot import Robot, to_affine, matrix_to_pos_orn
-from diffrobot.robot.robot import to_affine, matrix_to_pos_orn
 from frankx import Robot, Waypoint, WaypointMotion, JointMotion, Affine, LinearMotion, Kinematics
 
 from rs_imle_policy.realsense.multi_realsense import MultiRealsense
@@ -37,17 +37,14 @@ import pdb
 class PerceptionSystem:
     def __init__(self):
         self.cams = MultiRealsense(
-            serial_numbers=['123622270136', # wrist
-                            '036422070913',
-                            '035122250388'], # side
+            serial_numbers=['123622270136', '035122250692'],
             resolution=(640,480),
             enable_depth=False, 
         )
     def start(self):
         self.cams.start()
-        self.cams.cameras['123622270136'].set_exposure(exposure=10000.0, gain=16) # d405
-        self.cams.cameras['036422070913'].set_exposure(exposure=130.00, gain=13) #d435
-        self.cams.cameras['035122250388'].set_exposure(exposure=70.00, gain=70) #d435
+        self.cams.cameras['123622270136'].set_exposure(exposure=5000, gain=60)
+        self.cams.cameras['035122250692'].set_exposure(exposure=100, gain=60)
    
     def stop(self):
         self.cams.stop()
@@ -80,8 +77,9 @@ class RobotInferenceController:
 
 
     def move_to_start(self):
+        self.robot.move(JointMotion([-1.829, 0.008, 0.172, -1.594, 0.001, 1.559, 0.718]))
         # self.robot.move(JointMotion([-1.9953644495495173, -0.07019201069593659, 0.051291523464672376, -2.4943418327817803, -0.042134962130810624, 2.385776886145273, 0.35092161391247345]))
-        self.robot.move(JointMotion([-1.4257584505685634, -0.302815655026201, 0.05126683842989545, -2.7415479229025443, 0.011030055865001531, 2.3881221201502796, 0.8777110836404692]))
+        # self.robot.move(JointMotion([-1.4257584505685634, -0.302815655026201, 0.05126683842989545, -2.7415479229025443, 0.011030055865001531, 2.3881221201502796, 0.8777110836404692]))
 
 
     def create_robot(self, ip:str = "172.16.0.2", dynamic_rel: float=0.4): #0.4
@@ -94,7 +92,7 @@ class RobotInferenceController:
 
     def setup_diffusion_policy(self):
         torch.cuda.empty_cache()
-        self.policy = Policy(config_file='vision_config',
+        self.policy = Policy(config_file='pick_place_config',
                         saved_run_name=None, 
                         mode='infer')
 
@@ -105,9 +103,11 @@ class RobotInferenceController:
     def process_inference_vision(self, obs_deque):
         image_side = np.stack([x['image_side'] for x in obs_deque])
         image_wrist = np.stack([x['image_wrist'] for x in obs_deque])
-        agent_pos = np.stack([x['agent_pos'] for x in obs_deque])
+        agent_pos = np.stack([x['state'] for x in obs_deque])
+        print(self.policy.stats.keys())
 
-        nagent_pos = normalize_data(agent_pos, stats=self.policy.stats['agent_pos'])
+
+        nagent_pos = normalize_data(agent_pos, stats=self.policy.stats['state'])
 
         nimage_side = torch.stack([self.policy.transform(img) for img in image_side])
         nimage_wrist = torch.stack([self.policy.transform(img) for img in image_wrist])
@@ -130,22 +130,25 @@ class RobotInferenceController:
     
     
     def get_observation(self):
-        # s = self.robot.get_state()
-        s = self.motion.get_robot_state()
+        s = self.robot.get_state(read_once = False)
+ 
         # s = self.robot.read_once()
         X_BE = np.array(s.O_T_EE).reshape(4,4).T
+        t = X_BE[:3,3]
+        rot = utils.matrix_to_rotation_6d(X_BE[:3,:3])
+        state = np.concat([t,rot])
 
         images = self.perception_system.cams.get()
         images_wrist = images[0]['color']
         images_side = images[1]['color']
-        images_top = images[2]['color']
+        # images_top = images[2]['color']
 
         # save images_top
         # plt.imsave("images_top.png", images_top)
 
-        self.all_frames.append(images_top)
+        self.all_frames.append(images_side)
 
-        cv2.imshow('image', images_top)
+        cv2.imshow('image', images_side)
         if cv2.waitKey(1) & 0xFF == ord('q'):
             # write all frames to video
             save_path = f"saved_evaluation_media/{self.eval_name}/{self.idx}.mp4"
@@ -160,7 +163,7 @@ class RobotInferenceController:
             print("Done")
 
 
-        return {"agent_pos": X_BE[:2, 3], 
+        return {"state": state, 
                 "image_wrist": images_wrist,
                 "image_side": images_side}
     
@@ -204,7 +207,7 @@ class RobotInferenceController:
         naction = naction.detach().to('cpu').numpy()[0]
 
         # unnormalize action
-        action_pos = unnormalize_data(naction, stats=self.policy.stats['agent_pos'])
+        action_pos = unnormalize_data(naction, stats=self.policy.stats['action'])
 
         # only take action_horizon number of actions
         start = self.policy.params.obs_horizon - 1
@@ -223,7 +226,6 @@ class RobotInferenceController:
         height = current_pose.translation()[2]
         q = current_pose.quaternion()
         
-        # motion = robot.start_impedance_controller(1000, 40, 1)
         self.motion = WaypointMotion([Waypoint(current_pose)], return_when_finished=False)
         thread = self.robot.move_async(self.motion)
 
@@ -235,22 +237,20 @@ class RobotInferenceController:
             # wait for obs_deque to have len 2
             while len(self.obs_deque) < self.obs_horizon:
                 time.sleep(0.1)
-                # print("Waiting for observation")
+                print("Waiting for observation")
 
             out = self.infer_action(self.obs_deque.copy())
             action = out['action']
 
             print("elapsed time: ", time.time() - start_time)
 
-            # if time.time() - start_time > 120:
-            #     print("Time limit reached")
-            #     break
+            
 
             
             for i in range(4,len(action)):
                 # keep everyting the same except xy which is the action
-                trans = np.array([action[i][0], action[i][1], height])
-                self.motion.set_next_waypoint(Waypoint(Affine(trans[0], trans[1], height, q[0], q[1], q[2], q[3])))
+                trans = np.array([action[i][0], action[i][1], action[i][2]])
+                self.motion.set_next_waypoint(Waypoint(Affine(trans[0], trans[1], trans[2], q[0], q[1], q[2], q[3])))
                 time.sleep(0.1)
 
 
