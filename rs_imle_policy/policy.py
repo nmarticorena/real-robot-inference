@@ -62,7 +62,7 @@ class Policy:
             self.load_weights(saved_run_name)
 
             # stats_path = os.path.join("/mnt/droplet/", 'stats.pkl')
-            stats_path = os.path.join("saved_weights/rs_imle_10/", 'stats.pkl')
+            stats_path = os.path.join("saved_weights/default/rs_imle_25p/", 'stats.pkl')
             self.stats = np.load(stats_path, allow_pickle=True)
 
             self.transform = transforms.Compose([
@@ -100,8 +100,7 @@ class Policy:
 
         elif self.method == 'rs_imle':
             print('Loading pretrained weights for rs_imle')
-            fpath = os.path.join("saved_weights/rs_imle_10/", "net_epoch_1100.pth")
-            # fpath = os.path.join("saved_weights/rs_imle_policy_0.25/", "net_epoch_600.pth")
+            fpath = os.path.join("saved_weights/default/rs_imle_25p/", "net_epoch_1190.pth")
             self.nets.load_state_dict(torch.load(fpath, map_location='cuda'))
 
         print('Pretrained weights loaded.')
