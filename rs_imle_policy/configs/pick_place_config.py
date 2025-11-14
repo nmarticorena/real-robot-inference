@@ -2,9 +2,9 @@ dataset_path = '/media/nmarticorena/DATA/imitation_learning/pick_and_place_ball/
 
 method = 'rs_imle'
 vision_feature_dim = 512
-lowdim_obs_dim = 3 + 6 #+ 2 #3dposition, 6D orientation, 2d gripper
+lowdim_obs_dim = 3 + 6 + 1 #+ 2 #3dposition, 6D orientation, 2d gripper
 obs_dim = (vision_feature_dim*2) + lowdim_obs_dim
-action_dim = 3+6 #+2 #3dposition, 6D orientation, 2d gripper
+action_dim = 3+6 + 1 #+2 #3dposition, 6D orientation, 2d gripper
 
 pred_horizon = 16
 action_horizon = 8
