@@ -79,11 +79,22 @@ class MultiCameraVisualizer(mp.Process):
             time.sleep(1 / self.vis_fps)
 
 if __name__ == '__main__':
+    # rs = MultiRealsense(
+    #     serial_numbers=[
+    #         '123622270136', '035122250692'
+    #         ],
+    # )
     rs = MultiRealsense(
-        serial_numbers=[
-            '123622270136', '035122250692'
-            ],
-    )
+            serial_numbers=['123622270136', '035122250692'],
+            resolution=(640,480),
+            record_fps=10,
+            depth_resolution=(640, 480),
+            enable_depth=False, 
+        )
+    rs.cameras['123622270136'].set_exposure(exposure=5000, gain=60)
+    rs.cameras['035122250692'].set_exposure(exposure=100, gain=60)
+
+
     rs.start()
     viewer = MultiCameraVisualizer(rs, row=2, col=2)
     viewer.run()
