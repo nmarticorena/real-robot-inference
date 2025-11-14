@@ -59,6 +59,7 @@ pybind11-stubgen = ">=2.5.5,<3"
 ffmpeg = ">=8.0.0,<9"
 scikit-build-core = ">=0.11.6,<0.12"
 librealsense = ">=2.56.5,<3"
+ipython = ">=9.7.0,<10"
 
 [pypi-options]
 no-build-isolation = true
@@ -73,5 +74,6 @@ spatialgeometry = {git = "https://github.com/nmarticorena/spatialgeometry.git"}
 spatialmath-python = {git = "https://github.com/nmarticorena/spatialmath-python.git"}
 frankx = {path = "../frankx"}
 atomics = ">=1.0.3, <2"
+panda-python = ">=0.8.1, <0.9"
 # diffrobot = {git = "https://github.com/krishanrana/diffrobot.git" , rev = "cd0179361c464279909d93db74c342852762df4f"}
 
