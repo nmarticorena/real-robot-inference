@@ -1,4 +1,6 @@
 from typing import Tuple, Sequence, Dict, Union, Optional, Callable
+import spatialmath as sm
+import spatialmath.base as smb
 import numpy as np
 import math
 import torch
@@ -25,7 +27,7 @@ import reactivex as rx
 from reactivex import operators as ops
 
 # from diffrobot.robot.robot import Robot, to_affine, matrix_to_pos_orn
-from frankx import Robot, Waypoint, WaypointMotion, JointMotion, Affine, LinearMotion, Kinematics
+from frankx import Robot, Waypoint, WaypointMotion, JointMotion, Affine, LinearMotion, Kinematics, Gripper
 
 from rs_imle_policy.realsense.multi_realsense import MultiRealsense
 
@@ -39,12 +41,17 @@ class PerceptionSystem:
         self.cams = MultiRealsense(
             serial_numbers=['123622270136', '035122250692'],
             resolution=(640,480),
+            record_fps=10,
+            depth_resolution=(640, 480),
             enable_depth=False, 
         )
     def start(self):
-        self.cams.start()
         self.cams.cameras['123622270136'].set_exposure(exposure=5000, gain=60)
         self.cams.cameras['035122250692'].set_exposure(exposure=100, gain=60)
+
+        self.cams.start()
+        time.sleep(2)
+
    
     def stop(self):
         self.cams.stop()
@@ -52,9 +59,10 @@ class PerceptionSystem:
 
 class RobotInferenceController:
     def __init__(self, eval_name, idx):
-        
+        self.delta = utils.get_delta().A 
         self.seed(42)
         self.robot = self.create_robot()
+        self.gripper = Gripper("172.16.0.2", speed = 0.1)
         self.perception_system = PerceptionSystem()
         self.perception_system.start()
         self.setup_diffusion_policy()
@@ -62,6 +70,7 @@ class RobotInferenceController:
 
         self.eval_name = eval_name
         self.all_frames = []
+        self.all_frames_wrist = []
         self.done = False
         self.idx = str(idx)
 
@@ -77,6 +86,7 @@ class RobotInferenceController:
 
 
     def move_to_start(self):
+        self.open_gripper_if_closed()
         self.robot.move(JointMotion([-1.829, 0.008, 0.172, -1.594, 0.001, 1.559, 0.718]))
         # self.robot.move(JointMotion([-1.9953644495495173, -0.07019201069593659, 0.051291523464672376, -2.4943418327817803, -0.042134962130810624, 2.385776886145273, 0.35092161391247345]))
         # self.robot.move(JointMotion([-1.4257584505685634, -0.302815655026201, 0.05126683842989545, -2.7415479229025443, 0.011030055865001531, 2.3881221201502796, 0.8777110836404692]))
@@ -104,7 +114,6 @@ class RobotInferenceController:
         image_side = np.stack([x['image_side'] for x in obs_deque])
         image_wrist = np.stack([x['image_wrist'] for x in obs_deque])
         agent_pos = np.stack([x['state'] for x in obs_deque])
-        print(self.policy.stats.keys())
 
 
         nagent_pos = normalize_data(agent_pos, stats=self.policy.stats['state'])
@@ -133,10 +142,12 @@ class RobotInferenceController:
         s = self.robot.get_state(read_once = False)
  
         # s = self.robot.read_once()
-        X_BE = np.array(s.O_T_EE).reshape(4,4).T
-        t = X_BE[:3,3]
+        X_BE = np.array(s.O_T_EE).reshape(4,4).T 
         rot = utils.matrix_to_rotation_6d(X_BE[:3,:3])
-        state = np.concat([t,rot])
+        # X_BE = X_BE @ self.delta
+        t = X_BE[:3,3]
+        width = self.gripper.width()
+        state = np.concat([t,rot, (width,)])
 
         images = self.perception_system.cams.get()
         images_wrist = images[0]['color']
@@ -147,16 +158,23 @@ class RobotInferenceController:
         # plt.imsave("images_top.png", images_top)
 
         self.all_frames.append(images_side)
+        self.all_frames_wrist.append(images_wrist)
 
-        cv2.imshow('image', images_side)
+        cv2.imshow('image', np.zeros((300,300)))
         if cv2.waitKey(1) & 0xFF == ord('q'):
             # write all frames to video
-            save_path = f"saved_evaluation_media/{self.eval_name}/{self.idx}.mp4"
+            save_path = f"saved_evaluation_media/{self.eval_name}/{self.idx}_side.mp4"
             out = cv2.VideoWriter(save_path, cv2.VideoWriter_fourcc(*'mp4v'), 10, (640, 480))
             for frame in self.all_frames:
                 rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)  # Convert BGR to RGB
                 out.write(rgb_frame)
             out.release()
+            save_path_wrist = f"saved_evaluation_media/{self.eval_name}/{self.idx}_wrist.mp4"
+            out = cv2.VideoWriter(save_path_wrist, cv2.VideoWriter_fourcc(*'mp4v'), 10, (640, 480))
+            for frame in self.all_frames_wrist:
+                rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)  # Convert BGR to RGB
+                out.write(rgb_frame)
+ 
             cv2.destroyAllWindows()
             self.perception_system.stop()
             self.done = True
@@ -216,6 +234,20 @@ class RobotInferenceController:
 
         return {"action": action}
 
+    def close_gripper_if_open(self) -> bool:
+        # print(f"Trying to close gripper. Width: {self.gripper.width()}")
+        if self.gripper.width() > 0.04:
+            # print("Passes")
+            self.gripper.close()
+            return True
+        return False
+
+    def open_gripper_if_closed(self) -> bool:
+        print(f"Trying to open gripper. Width: {self.gripper.width()}")
+        if self.gripper.width() < 0.03:
+            self.gripper.open()
+            return True
+        return False
 
     def start_inference(self):
         obs_stream = rx.interval(0.1, scheduler=rx.scheduler.NewThreadScheduler()) \
@@ -224,7 +256,6 @@ class RobotInferenceController:
         
         current_pose = self.robot.current_pose()
         height = current_pose.translation()[2]
-        q = current_pose.quaternion()
         
         self.motion = WaypointMotion([Waypoint(current_pose)], return_when_finished=False)
         thread = self.robot.move_async(self.motion)
@@ -233,6 +264,7 @@ class RobotInferenceController:
 
         time.sleep(2)
 
+        q = current_pose.quaternion()
         while not self.done:
             # wait for obs_deque to have len 2
             while len(self.obs_deque) < self.obs_horizon:
@@ -241,17 +273,53 @@ class RobotInferenceController:
 
             out = self.infer_action(self.obs_deque.copy())
             action = out['action']
+            print(action.shape)
 
             print("elapsed time: ", time.time() - start_time)
 
+            print(action[:,3:-1].shape)
             
-
+            n_trans, n_quads = self.apply_delta(action)
+            action_quads = utils.rotation_6d_to_quat(torch.from_numpy(action[:,3:-1]))
             
-            for i in range(4,len(action)):
-                # keep everyting the same except xy which is the action
+            for i in range(0,4):
                 trans = np.array([action[i][0], action[i][1], action[i][2]])
+
+                # q = np.array([action_quads[i][0],action_quads[i][1],action_quads[i][2],action_quads[i][3]])
+                
+                # trans = n_trans[i]
+                # q = n_quads[i]
                 self.motion.set_next_waypoint(Waypoint(Affine(trans[0], trans[1], trans[2], q[0], q[1], q[2], q[3])))
+                if action[i][-1] > 0.8: 
+                    print("clossing")
+                    self.close_gripper_if_open()
+                    # gripper.move_unsafe_async(0)
+                else:
+                    print("openning")
+                    self.open_gripper_if_closed()
+                    # gripper.move_unsafe_async(50)
                 time.sleep(0.1)
+
+    def apply_delta(self, action: np.ndarray):
+        n = action.shape[0]
+        # Action is a trans + 6dof rotation
+        t = action[:,:3] 
+        R = utils.rotation_6d_to_matrix(torch.from_numpy(action[:,3:-1]))
+
+
+        trans = []
+        quads = []
+        for i in range(n):
+            T_0p = sm.SE3(t[i])
+            T_0p.R = sm.SO3(R[i].numpy(), check = False).norm()
+
+            T_0f = T_0p * self.delta
+
+            trans.append(T_0f[:3,3])
+            quads.append(smb.r2q(T_0f[:3,:3]))
+
+        return trans, quads
+
 
 
 
