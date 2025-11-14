@@ -74,6 +74,7 @@ class PolicyDataset(Dataset):
         with open(os.path.join(self.dataset_path, "stats.pkl"), 'wb') as f:
             pkl.dump(self.stats, f)
 
+
         # Create sample indices
         self.indices = self.create_sample_indices(self.rlds, sequence_length=pred_horizon)
 
@@ -127,20 +128,31 @@ class PolicyDataset(Dataset):
 
             X_BE_follower = df['X_BE'].tolist()
             X_BE_leader = [(self.robot.fkine(np.array(q), "panda_link8")).A * self.X_FE for q in df['gello_q']]
+            gripper_width = df["gripper_state"].tolist()
+            gripper_width = np.array(gripper_width).reshape(-1,1)
+            gripper_action = df["gripper_action"].tolist()
+            gripper_action = np.array(gripper_action).reshape(-1,1)
 
-            X_BE_follower = [np.array(x).T for x in X_BE_follower] # TODO: Remove this patch
+            # X_BE_follower = [np.array(x).T for x in X_BE_follower] # TODO: Remove this patch
 
             X_BE_follower_pos, X_BE_follower_orien = utils.extract_robot_pos_orien(X_BE_follower)
             X_BE_leader_pos, X_BE_leader_orien = utils.extract_robot_pos_orien(X_BE_leader)
 
+            state = np.concatenate([X_BE_follower_pos, X_BE_follower_orien, gripper_width], axis=-1)
+            action = np.concatenate([X_BE_leader_pos, X_BE_leader_orien, gripper_action], axis=-1)
+
             rlds[episode_index] = {
                 'robot_pos': X_BE_follower_pos,
                 'robot_orien': X_BE_follower_orien,
+                'gripper_state': gripper_width,
                 'action_orien': X_BE_leader_orien,
                 'action_pos': X_BE_leader_pos,
+                'action_gripper': gripper_action,
                 'X_BE': X_BE_follower,
                 'gello_q': df['gello_q'].tolist(),
-                'robot_q': df['robot_q'].tolist()
+                'robot_q': df['robot_q'].tolist(),
+                'state': state,
+                'action': action
             }
         return rlds
 
@@ -148,11 +160,11 @@ class PolicyDataset(Dataset):
         for episode in self.rlds.keys():
             self.rlds[episode]['robot_pos'] = normalize_data(np.array(self.rlds[episode]['robot_pos']), self.stats['robot_pos'])
             self.rlds[episode]['robot_orien'] = normalize_data(np.array(self.rlds[episode]['robot_orien']), self.stats['robot_orien'])
-            #self.rlds[episode]['robot_gripper'] = normalize_data(np.array(self.rlds[episode['gripper_pos']]), self.stats['agent_gripper_pos'])
+            self.rlds[episode]['gripper_state'] = normalize_data(np.array(self.rlds[episode]['gripper_state']), self.stats['gripper_state'])
 
             self.rlds[episode]['action_pos'] = normalize_data(np.array(self.rlds[episode]['action_pos']), self.stats['action_pos'])
             self.rlds[episode]['action_orien'] = normalize_data(np.array(self.rlds[episode]['action_orien']), self.stats['action_orien'])
-            # self.rlds[episode]['action_gripper'] = normalize_data(np.array(self.rlds[episode]['action_gripper']), self.stats['action_gripper'])
+            self.rlds[episode]['action_gripper'] = normalize_data(np.array(self.rlds[episode]['action_gripper']), self.stats['action_gripper'])
         return
 
     def create_sample_indices(self, rlds_dataset, sequence_length=16):
@@ -177,21 +189,30 @@ class PolicyDataset(Dataset):
 
         get_data("robot_pos")
         get_data("robot_orien")
+        get_data("gripper_state")
         get_data("action_pos")
         get_data("action_orien")
+        get_data("action_gripper")
+
+        get_data("state")
+        get_data("action")
+
+
 
 
 
     def sample_sequence(self, episode, buffer_start_idx, buffer_end_idx):
         agent_pos = self.rlds[episode]['robot_pos'][buffer_start_idx:buffer_end_idx]
         agent_orien = self.rlds[episode]['robot_orien'][buffer_start_idx:buffer_end_idx]
+        agent_gripper = self.rlds[episode]['gripper_state'][buffer_start_idx:buffer_end_idx]
 
         action_pos = self.rlds[episode]['robot_pos'][buffer_start_idx+1:buffer_end_idx+1]
         action_orien = self.rlds[episode]['robot_orien'][buffer_start_idx+1:buffer_end_idx+1]
+        action_gripper = self.rlds[episode]['action_gripper'][buffer_start_idx+1:buffer_end_idx+1]
         frames = self.read_video_frames(episode, buffer_start_idx, buffer_end_idx)
 
-        robot_state = np.concatenate([agent_pos, agent_orien], axis=-1)
-        robot_action = np.concatenate([action_pos, action_orien], axis=-1)
+        robot_state = np.concatenate([agent_pos, agent_orien, agent_gripper], axis=-1)
+        robot_action = np.concatenate([action_pos, action_orien, action_gripper], axis=-1)
 
         seq = {
             'state': robot_state,
