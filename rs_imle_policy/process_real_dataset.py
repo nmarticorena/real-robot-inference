@@ -7,7 +7,9 @@ import tqdm
 import tyro
 
 
-def convert_to_h5(dataset_path):
+def convert_to_h5(dataset_path: str,/):
+
+    dataset_name = dataset_path + "/images.h5"
     # Open an HDF5 file in write mode
     with h5py.File(dataset_name, 'w') as h5f:
         episodes = sorted(os.listdir(os.path.join(dataset_path, "episodes")), key=lambda x: int(x))
@@ -37,7 +39,6 @@ def convert_to_h5(dataset_path):
     print(f"Video data saved to {dataset_name}")
 
 if __name__ == "__main__":
-    dataset_path = "/media/nmarticorena/DATA/imitation_learning/pick_and_place_ball/"
-    dataset_name = dataset_path + "/images.h5"
+    tyro.cli(convert_to_h5)
 
-    convert_to_h5(dataset_path)
+
