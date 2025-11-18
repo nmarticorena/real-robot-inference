@@ -1,19 +1,11 @@
 import cv2
-import os
-from PIL import Image
 import numpy as np
 import pyrealsense2 as rs
-import numpy as np
 import matplotlib.pyplot as plt
 import time
 
-import pdb
 
 import argparse
-
-
-
-
 
 
 def save_start_states():
@@ -23,15 +15,17 @@ def save_start_states():
     # Create a config and configure the pipeline to stream
     config = rs.config()
     config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
-    config.enable_device('035122250388')  # choose specific camera
+    config.enable_device("035122250388")  # choose specific camera
 
     # Start streaming
     profile = pipeline.start(config)
 
     # Get the color sensor
-    color_sensor = profile.get_device().query_sensors()[1]  # Typically, index 1 is for the color sensor
+    color_sensor = profile.get_device().query_sensors()[
+        1
+    ]  # Typically, index 1 is for the color sensor
     color_sensor.set_option(rs.option.exposure, 70)  # Set exposure to 70
-    color_sensor.set_option(rs.option.gain, 70)      # Set gain to 70
+    color_sensor.set_option(rs.option.gain, 70)  # Set gain to 70
 
     time.sleep(2)
 
@@ -58,8 +52,7 @@ def save_start_states():
         pipeline.stop()
 
 
-
-def overlay_image_on_realsense_stream(image_path, alpha=0.5, device_id='035122250388'):
+def overlay_image_on_realsense_stream(image_path, alpha=0.5, device_id="035122250388"):
     """
     Overlays a single image onto a RealSense camera stream in real-time.
 
@@ -70,12 +63,14 @@ def overlay_image_on_realsense_stream(image_path, alpha=0.5, device_id='03512225
     """
     # Load the overlay image with potential alpha channel
     overlay_image = cv2.imread(image_path, cv2.IMREAD_UNCHANGED)
-    
+
     # Check if the image has an alpha channel
     if overlay_image.shape[2] == 4:
         # Split overlay image into color and alpha channels
         overlay_bgr = overlay_image[..., :3]  # Color channels
-        overlay_alpha = overlay_image[..., 3] / 255.0  # Normalize alpha channel to 0-1 range
+        overlay_alpha = (
+            overlay_image[..., 3] / 255.0
+        )  # Normalize alpha channel to 0-1 range
     else:
         # If no alpha channel, use a fully opaque mask
         overlay_bgr = overlay_image
@@ -113,33 +108,43 @@ def overlay_image_on_realsense_stream(image_path, alpha=0.5, device_id='03512225
 
             # Resize overlay image and alpha channel to match the frame size
             overlay_resized = cv2.resize(overlay_bgr, (frame.shape[1], frame.shape[0]))
-            overlay_alpha_resized = cv2.resize(overlay_alpha, (frame.shape[1], frame.shape[0]))
+            overlay_alpha_resized = cv2.resize(
+                overlay_alpha, (frame.shape[1], frame.shape[0])
+            )
 
             # Expand overlay_alpha_resized to match the 3-channel shape of frame
             overlay_alpha_resized = cv2.merge([overlay_alpha_resized] * 3)
 
             # Blend overlay with the frame using alpha blending
-            blended_frame = (frame * (1 - overlay_alpha_resized * alpha) +
-                             overlay_resized * (overlay_alpha_resized * alpha)).astype(np.uint8)
+            blended_frame = (
+                frame * (1 - overlay_alpha_resized * alpha)
+                + overlay_resized * (overlay_alpha_resized * alpha)
+            ).astype(np.uint8)
 
             # Display the blended frame
             cv2.imshow("Overlayed RealSense Stream", blended_frame)
 
             # Exit on pressing 'q'
-            if cv2.waitKey(1) & 0xFF == ord('q'):
+            if cv2.waitKey(1) & 0xFF == ord("q"):
                 break
     finally:
         pipeline.stop()
         cv2.destroyAllWindows()
 
 
-
 if __name__ == "__main__":
-
     # args
-    parser = argparse.ArgumentParser(description='Overlay an image on a RealSense camera stream.')
-    parser.add_argument('--idx', type=int, default=0, help='Index of the image to overlay.')
+    parser = argparse.ArgumentParser(
+        description="Overlay an image on a RealSense camera stream."
+    )
+    parser.add_argument(
+        "--idx", type=int, default=0, help="Index of the image to overlay."
+    )
 
     idx = parser.parse_args().idx
 
-    overlay_image_on_realsense_stream(f"start_states/{parser.parse_args().idx}.png", alpha=0.5, device_id='035122250388')
+    overlay_image_on_realsense_stream(
+        f"start_states/{parser.parse_args().idx}.png",
+        alpha=0.5,
+        device_id="035122250388",
+    )

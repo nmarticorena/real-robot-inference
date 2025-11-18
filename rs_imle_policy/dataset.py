@@ -1,11 +1,9 @@
 import os
 import json
-import cv2
 import numpy as np
 import torch
 from torch.utils.data import Dataset
 from typing import Optional, Callable
-import pdb
 import pandas as pd
 import roboticstoolbox as rtb
 import time
@@ -18,30 +16,37 @@ import pickle as pkl
 import rs_imle_policy.utilities as utils
 import spatialmath as sm
 
+
 # Helper function to get normalization stats
 def get_data_stats(data):
-    stats = {
-        'min': np.min(data, axis=0),
-        'max': np.max(data, axis=0)
-    }
+    stats = {"min": np.min(data, axis=0), "max": np.max(data, axis=0)}
     return stats
+
 
 # Normalize data to [-1, 1]
 def normalize_data(data, stats):
-    ndata = (data - stats['min']) / (stats['max'] - stats['min'])  # Normalize to [0,1]
+    ndata = (data - stats["min"]) / (stats["max"] - stats["min"])  # Normalize to [0,1]
     ndata = ndata * 2 - 1  # Normalize to [-1,1]
     return ndata
+
 
 # Unnormalize data
 def unnormalize_data(ndata, stats):
     ndata = (ndata + 1) / 2
-    data = ndata * (stats['max'] - stats['min']) + stats['min']
+    data = ndata * (stats["max"] - stats["min"]) + stats["min"]
     return data
 
 
 class PolicyDataset(Dataset):
-    def __init__(self, dataset_path: str, pred_horizon: int, obs_horizon: int,
-                 action_horizon: int, transform: Optional[Callable] = None, mode='train'):
+    def __init__(
+        self,
+        dataset_path: str,
+        pred_horizon: int,
+        obs_horizon: int,
+        action_horizon: int,
+        transform: Optional[Callable] = None,
+        mode="train",
+    ):
         self.dataset_path = dataset_path
         self.pred_horizon = pred_horizon
         self.obs_horizon = obs_horizon
@@ -60,7 +65,6 @@ class PolicyDataset(Dataset):
         )
         self.X_FE = sm.SE3(X_FE, check=False).norm()
 
-
         # Load all episodes and create sample indices
         self.rlds = self.create_rlds_dataset()
         # Store video paths
@@ -71,100 +75,134 @@ class PolicyDataset(Dataset):
         self.compute_normalization_stats()
 
         # save stats
-        with open(os.path.join(self.dataset_path, "stats.pkl"), 'wb') as f:
+        with open(os.path.join(self.dataset_path, "stats.pkl"), "wb") as f:
             pkl.dump(self.stats, f)
 
-
         # Create sample indices
-        self.indices = self.create_sample_indices(self.rlds, sequence_length=pred_horizon)
-
+        self.indices = self.create_sample_indices(
+            self.rlds, sequence_length=pred_horizon
+        )
 
         # Normalize the data
         self.normalize_rlds()
 
         # if mode == 'train':
-        self.cached_dataset = h5py.File(f'{self.dataset_path}/images.h5', 'r')
+        self.cached_dataset = h5py.File(f"{self.dataset_path}/images.h5", "r")
 
         # if mode == 'test':
-            # self.cached_dataset = h5py.File('../../data/t_block_1/t_block_1.h5', 'r')
-
+        # self.cached_dataset = h5py.File('../../data/t_block_1/t_block_1.h5', 'r')
 
         if self.transform is None:
-            self.transform = transforms.Compose([
-                            transforms.ToPILImage(),
-                            transforms.RandomCrop((216, 288)),
-                            transforms.ToTensor()])
-
+            self.transform = transforms.Compose(
+                [
+                    transforms.ToPILImage(),
+                    transforms.RandomCrop((216, 288)),
+                    transforms.ToTensor(),
+                ]
+            )
 
     def get_video_paths(self):
         video_paths = {}
-        episodes = sorted(os.listdir(os.path.join(self.dataset_path, "episodes")), key=lambda x: int(x))
+        episodes = sorted(
+            os.listdir(os.path.join(self.dataset_path, "episodes")),
+            key=lambda x: int(x),
+        )
         for episode in episodes:
-            video_file_wrist = os.path.join(self.dataset_path, "episodes", episode, "video", "0.mp4")
-            video_file_top = os.path.join(self.dataset_path, "episodes", episode, "video", "1.mp4")
-            video_file_side = os.path.join(self.dataset_path, "episodes", episode, "video", "2.mp4")
+            video_file_wrist = os.path.join(
+                self.dataset_path, "episodes", episode, "video", "0.mp4"
+            )
+            video_file_top = os.path.join(
+                self.dataset_path, "episodes", episode, "video", "1.mp4"
+            )
+            video_file_side = os.path.join(
+                self.dataset_path, "episodes", episode, "video", "2.mp4"
+            )
 
             all_videos = {
-                'wrist': video_file_wrist,
-                'top': video_file_top,
-                'side': video_file_side
+                "wrist": video_file_wrist,
+                "top": video_file_top,
+                "side": video_file_side,
             }
             video_paths[int(episode)] = all_videos
         return video_paths
 
-
     def create_rlds_dataset(self):
         rlds = {}
-        episodes = sorted(os.listdir(os.path.join(self.dataset_path, "episodes")), key=lambda x: int(x))
+        episodes = sorted(
+            os.listdir(os.path.join(self.dataset_path, "episodes")),
+            key=lambda x: int(x),
+        )
 
         for episode_index, episode in enumerate(episodes):
-            episode_path = os.path.join(self.dataset_path, "episodes", episode, "state.json")
+            episode_path = os.path.join(
+                self.dataset_path, "episodes", episode, "state.json"
+            )
 
             with open(episode_path, "r") as f:
                 data = json.load(f)
 
             df = pd.DataFrame(data)
-            df['idx'] = range(len(df))
+            df["idx"] = range(len(df))
 
-            X_BE_follower = df['X_BE'].tolist()
-            X_BE_leader = [(self.robot.fkine(np.array(q), "panda_link8")).A * self.X_FE for q in df['gello_q']]
+            X_BE_follower = df["X_BE"].tolist()
+            X_BE_leader = [(self.robot.fkine(np.array(q))).A for q in df["gello_q"]]
             gripper_width = df["gripper_state"].tolist()
-            gripper_width = np.array(gripper_width).reshape(-1,1)
+            gripper_width = np.array(gripper_width).reshape(-1, 1)
             gripper_action = df["gripper_action"].tolist()
-            gripper_action = np.array(gripper_action).reshape(-1,1)
+            gripper_action = np.array(gripper_action).reshape(-1, 1)
 
-            # X_BE_follower = [np.array(x).T for x in X_BE_follower] # TODO: Remove this patch
+            X_BE_follower_pos, X_BE_follower_orien = utils.extract_robot_pos_orien(
+                X_BE_follower
+            )
+            X_BE_leader_pos, X_BE_leader_orien = utils.extract_robot_pos_orien(
+                X_BE_leader
+            )
 
-            X_BE_follower_pos, X_BE_follower_orien = utils.extract_robot_pos_orien(X_BE_follower)
-            X_BE_leader_pos, X_BE_leader_orien = utils.extract_robot_pos_orien(X_BE_leader)
-
-            state = np.concatenate([X_BE_follower_pos, X_BE_follower_orien, gripper_width], axis=-1)
-            action = np.concatenate([X_BE_leader_pos, X_BE_leader_orien, gripper_action], axis=-1)
+            state = np.concatenate(
+                [X_BE_follower_pos, X_BE_follower_orien, gripper_width], axis=-1
+            )
+            action = np.concatenate(
+                [X_BE_leader_pos, X_BE_leader_orien, gripper_action], axis=-1
+            )
 
             rlds[episode_index] = {
-                'robot_pos': X_BE_follower_pos,
-                'robot_orien': X_BE_follower_orien,
-                'gripper_state': gripper_width,
-                'action_orien': X_BE_leader_orien,
-                'action_pos': X_BE_leader_pos,
-                'action_gripper': gripper_action,
-                'X_BE': X_BE_follower,
-                'gello_q': df['gello_q'].tolist(),
-                'robot_q': df['robot_q'].tolist(),
-                'state': state,
-                'action': action
+                "robot_pos": X_BE_follower_pos,
+                "robot_orien": X_BE_follower_orien,
+                "gripper_state": gripper_width,
+                "action_orien": X_BE_leader_orien,
+                "action_pos": X_BE_leader_pos,
+                "action_gripper": gripper_action,
+                "X_BE": X_BE_follower,
+                "gello_q": df["gello_q"].tolist(),
+                "robot_q": df["robot_q"].tolist(),
+                "state": state,
+                "action": action,
             }
         return rlds
 
     def normalize_rlds(self):
         for episode in self.rlds.keys():
-            self.rlds[episode]['robot_pos'] = normalize_data(np.array(self.rlds[episode]['robot_pos']), self.stats['robot_pos'])
-            self.rlds[episode]['robot_orien'] = normalize_data(np.array(self.rlds[episode]['robot_orien']), self.stats['robot_orien'])
-            self.rlds[episode]['gripper_state'] = normalize_data(np.array(self.rlds[episode]['gripper_state']), self.stats['gripper_state'])
+            self.rlds[episode]["robot_pos"] = normalize_data(
+                np.array(self.rlds[episode]["robot_pos"]), self.stats["robot_pos"]
+            )
+            self.rlds[episode]["robot_orien"] = normalize_data(
+                np.array(self.rlds[episode]["robot_orien"]), self.stats["robot_orien"]
+            )
+            self.rlds[episode]["gripper_state"] = normalize_data(
+                np.array(self.rlds[episode]["gripper_state"]),
+                self.stats["gripper_state"],
+            )
 
-            self.rlds[episode]['action_pos'] = normalize_data(np.array(self.rlds[episode]['action_pos']), self.stats['action_pos'])
-            self.rlds[episode]['action_orien'] = normalize_data(np.array(self.rlds[episode]['action_orien']), self.stats['action_orien'])
-            self.rlds[episode]['action_gripper'] = normalize_data(np.array(self.rlds[episode]['action_gripper']), self.stats['action_gripper'])
+            self.rlds[episode]["action_pos"] = normalize_data(
+                np.array(self.rlds[episode]["action_pos"]), self.stats["action_pos"]
+            )
+            self.rlds[episode]["action_orien"] = normalize_data(
+                np.array(self.rlds[episode]["action_orien"]), self.stats["action_orien"]
+            )
+            self.rlds[episode]["action_gripper"] = normalize_data(
+                np.array(self.rlds[episode]["action_gripper"]),
+                self.stats["action_gripper"],
+            )
         return
 
     def create_sample_indices(self, rlds_dataset, sequence_length=16):
@@ -172,7 +210,7 @@ class PolicyDataset(Dataset):
         for episode in rlds_dataset.keys():
             if int(episode) > 34:
                 break
-            episode_length = len(rlds_dataset[episode]['robot_pos'])
+            episode_length = len(rlds_dataset[episode]["robot_pos"])
             range_idx = episode_length - (sequence_length + 2)
             for idx in range(range_idx):
                 buffer_start_idx = idx
@@ -184,7 +222,10 @@ class PolicyDataset(Dataset):
 
     def compute_normalization_stats(self):
         def get_data(key: str):
-            data = np.concatenate([np.array(self.rlds[episode][key]) for episode in self.rlds.keys()], axis = 0)
+            data = np.concatenate(
+                [np.array(self.rlds[episode][key]) for episode in self.rlds.keys()],
+                axis=0,
+            )
             self.stats[key] = get_data_stats(data)
 
         get_data("robot_pos")
@@ -197,40 +238,41 @@ class PolicyDataset(Dataset):
         get_data("state")
         get_data("action")
 
-
-
-
-
     def sample_sequence(self, episode, buffer_start_idx, buffer_end_idx):
-        agent_pos = self.rlds[episode]['robot_pos'][buffer_start_idx:buffer_end_idx]
-        agent_orien = self.rlds[episode]['robot_orien'][buffer_start_idx:buffer_end_idx]
-        agent_gripper = self.rlds[episode]['gripper_state'][buffer_start_idx:buffer_end_idx]
+        agent_pos = self.rlds[episode]["robot_pos"][buffer_start_idx:buffer_end_idx]
+        agent_orien = self.rlds[episode]["robot_orien"][buffer_start_idx:buffer_end_idx]
+        agent_gripper = self.rlds[episode]["gripper_state"][
+            buffer_start_idx:buffer_end_idx
+        ]
 
-        action_pos = self.rlds[episode]['robot_pos'][buffer_start_idx+1:buffer_end_idx+1]
-        action_orien = self.rlds[episode]['robot_orien'][buffer_start_idx+1:buffer_end_idx+1]
-        action_gripper = self.rlds[episode]['action_gripper'][buffer_start_idx+1:buffer_end_idx+1]
+        action_pos = self.rlds[episode]["robot_pos"][
+            buffer_start_idx + 1 : buffer_end_idx + 1
+        ]
+        action_orien = self.rlds[episode]["robot_orien"][
+            buffer_start_idx + 1 : buffer_end_idx + 1
+        ]
+        action_gripper = self.rlds[episode]["action_gripper"][
+            buffer_start_idx + 1 : buffer_end_idx + 1
+        ]
         frames = self.read_video_frames(episode, buffer_start_idx, buffer_end_idx)
 
         robot_state = np.concatenate([agent_pos, agent_orien, agent_gripper], axis=-1)
-        robot_action = np.concatenate([action_pos, action_orien, action_gripper], axis=-1)
+        robot_action = np.concatenate(
+            [action_pos, action_orien, action_gripper], axis=-1
+        )
 
-        seq = {
-            'state': robot_state,
-            'action': robot_action,
-            'frames': frames
-        }
+        seq = {"state": robot_state, "action": robot_action, "frames": frames}
         return seq
-
 
     def read_video_frames(self, episode, start_frame, end_frame):
         frames = {}
         video = self.cached_dataset[str(episode)]
         # only need 2 frames
-        wrist_frames = video['wrist'][start_frame:start_frame+self.obs_horizon]
-        side_frames = video['side'][start_frame:start_frame+self.obs_horizon]
+        wrist_frames = video["wrist"][start_frame : start_frame + self.obs_horizon]
+        side_frames = video["side"][start_frame : start_frame + self.obs_horizon]
         # apply transform
-        frames['wrist']  = np.array([self.transform(frame) for frame in wrist_frames])
-        frames['side']  = np.array([self.transform(frame) for frame in side_frames])
+        frames["wrist"] = np.array([self.transform(frame) for frame in wrist_frames])
+        frames["side"] = np.array([self.transform(frame) for frame in side_frames])
 
         return frames
 
@@ -239,46 +281,53 @@ class PolicyDataset(Dataset):
 
     def visualize_images_in_row(self, tensor):
         # Ensure the input tensor is in the right shape
-        assert tensor.shape == (16, 3, 216, 288), "Tensor should have shape (16, 3, 216, 288)"
+        assert tensor.shape == (16, 3, 216, 288), (
+            "Tensor should have shape (16, 3, 216, 288)"
+        )
 
         # Create a grid of images in a single row
-        grid_img = torchvision.utils.make_grid(tensor, nrow=16)  # Arrange 16 images in a single row
+        grid_img = torchvision.utils.make_grid(
+            tensor, nrow=16
+        )  # Arrange 16 images in a single row
         # Convert the tensor to a numpy array for displaying
         plt.figure(figsize=(20, 5))  # Adjust figure size if necessary
-        plt.imshow(grid_img.permute(1, 2, 0).cpu().numpy())  # Permute to get (H, W, C) for display
-        plt.axis('off')  # Hide axis
+        plt.imshow(
+            grid_img.permute(1, 2, 0).cpu().numpy()
+        )  # Permute to get (H, W, C) for display
+        plt.axis("off")  # Hide axis
         plt.show()
 
     def __getitem__(self, idx):
         episode, buffer_start_idx, buffer_end_idx = self.indices[idx]
         seq = self.sample_sequence(episode, buffer_start_idx, buffer_end_idx)
 
-        frames = seq['frames']
+        frames = seq["frames"]
 
         # Convert to tensors
-        state = torch.tensor(seq['state'], dtype=torch.float32)
-        action = torch.tensor(seq['action'], dtype=torch.float32)
-        frames_wrist = frames['wrist']
-        frames_side = frames['side']
+        state = torch.tensor(seq["state"], dtype=torch.float32)
+        action = torch.tensor(seq["action"], dtype=torch.float32)
+        frames_wrist = frames["wrist"]
+        frames_side = frames["side"]
 
         # self.visualize_images_in_row(frames_wrist)
 
         # discard unused observations
-        state = state[:self.obs_horizon]
+        state = state[: self.obs_horizon]
 
         return {
-            'state': state,
-            'action': action,
-            'frames_wrist': frames_wrist,
-            'frames_side': frames_side
+            "state": state,
+            "action": action,
+            "frames_wrist": frames_wrist,
+            "frames_side": frames_side,
         }
 
 
+if __name__ == "__main__":
+    dataset = PolicyDataset(
+        "data/t_block_1", pred_horizon=16, obs_horizon=2, action_horizon=8
+    )
 
-if __name__ == '__main__':
-    dataset = PolicyDataset('data/t_block_1', pred_horizon=16, obs_horizon=2, action_horizon=8)
-
-    idx=0
+    idx = 0
     while True:
         start_time = time.time()
         dataset.__getitem__(idx)
