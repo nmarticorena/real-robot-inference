@@ -60,6 +60,8 @@ ffmpeg = ">=8.0.0,<9"
 scikit-build-core = ">=0.11.6,<0.12"
 librealsense = ">=2.56.5,<3"
 ipython = ">=9.7.0,<10"
+jupyter = ">=1.1.1,<2"
+nbstripout = ">=0.8.1,<0.9"
 
 [pypi-options]
 no-build-isolation = true
