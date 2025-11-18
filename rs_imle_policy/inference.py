@@ -15,6 +15,7 @@ import cv2
 import os
 # env import
 import time
+import roboticstoolbox as rtb
 
 from rs_imle_policy.policy import Policy
 from rs_imle_policy.dataset import normalize_data, unnormalize_data
@@ -50,7 +51,6 @@ class PerceptionSystem:
         self.cams.cameras['035122250692'].set_exposure(exposure=100, gain=60)
 
         self.cams.start()
-        time.sleep(2)
 
    
     def stop(self):
@@ -59,9 +59,10 @@ class PerceptionSystem:
 
 class RobotInferenceController:
     def __init__(self, eval_name, idx):
-        self.delta = utils.get_delta().A 
         self.seed(42)
         self.robot = self.create_robot()
+        rtb_panda = rtb.models.Panda()
+        self.delta = rtb_panda.fkine(rtb_panda.qr, start = "panda_link8", end = "panda_hand")
         self.gripper = Gripper("172.16.0.2", speed = 0.1)
         self.perception_system = PerceptionSystem()
         self.perception_system.start()
@@ -87,7 +88,8 @@ class RobotInferenceController:
 
     def move_to_start(self):
         self.open_gripper_if_closed()
-        self.robot.move(JointMotion([-1.829, 0.008, 0.172, -1.594, 0.001, 1.559, 0.718]))
+        self.robot.move(JointMotion(np.deg2rad([-90, 0, 0, -90, 0, 90, 45])))
+        # self.robot.move(JointMotion([-1.829, 0.008, 0.172, -1.594, 0.001, 1.559, 0.718]))
         # self.robot.move(JointMotion([-1.9953644495495173, -0.07019201069593659, 0.051291523464672376, -2.4943418327817803, -0.042134962130810624, 2.385776886145273, 0.35092161391247345]))
         # self.robot.move(JointMotion([-1.4257584505685634, -0.302815655026201, 0.05126683842989545, -2.7415479229025443, 0.011030055865001531, 2.3881221201502796, 0.8777110836404692]))
 
@@ -144,7 +146,7 @@ class RobotInferenceController:
         # s = self.robot.read_once()
         X_BE = np.array(s.O_T_EE).reshape(4,4).T 
         rot = utils.matrix_to_rotation_6d(X_BE[:3,:3])
-        # X_BE = X_BE @ self.delta
+        X_BE = X_BE # @ self.delta
         t = X_BE[:3,3]
         width = self.gripper.width()
         state = np.concat([t,rot, (width,)])
@@ -282,23 +284,26 @@ class RobotInferenceController:
             n_trans, n_quads = self.apply_delta(action)
             action_quads = utils.rotation_6d_to_quat(torch.from_numpy(action[:,3:-1]))
             
-            for i in range(0,4):
-                trans = np.array([action[i][0], action[i][1], action[i][2]])
-
-                # q = np.array([action_quads[i][0],action_quads[i][1],action_quads[i][2],action_quads[i][3]])
+            waypoints = []
+            for i in range(4, len(action)):
                 
-                # trans = n_trans[i]
-                # q = n_quads[i]
-                self.motion.set_next_waypoint(Waypoint(Affine(trans[0], trans[1], trans[2], q[0], q[1], q[2], q[3])))
-                if action[i][-1] > 0.8: 
-                    print("clossing")
-                    self.close_gripper_if_open()
-                    # gripper.move_unsafe_async(0)
-                else:
-                    print("openning")
-                    self.open_gripper_if_closed()
-                    # gripper.move_unsafe_async(50)
-                time.sleep(0.1)
+                trans = n_trans[i]
+                q = n_quads[i]
+                waypoints.append(Waypoint(Affine(trans[0], trans[1], trans[2], q[0], q[1], q[2], q[3])))
+            self.motion.set_next_waypoints(waypoints)
+            # self.motion.set_next_waypoint(Waypoint(Affine(trans[0], trans[1], trans[2], q[0], q[1], q[2], q[3])))
+            if action[4][-1] > 0.8: 
+                print("clossing")
+                self.close_gripper_if_open()
+                # gripper.move_unsafe_async(0)
+            else:
+                print("openning")
+                self.open_gripper_if_closed()
+                # gripper.move_unsafe_async(50)
+            time.sleep(0.1)
+            # while self.motion.finish():
+                # print("Waiting for motion to finish")
+                # time.sleep(0.001)
 
     def apply_delta(self, action: np.ndarray):
         n = action.shape[0]
@@ -315,8 +320,8 @@ class RobotInferenceController:
 
             T_0f = T_0p * self.delta
 
-            trans.append(T_0f[:3,3])
-            quads.append(smb.r2q(T_0f[:3,:3]))
+            trans.append(T_0f.t)
+            quads.append(smb.r2q(T_0f.A[:3,:3]))
 
         return trans, quads
 
