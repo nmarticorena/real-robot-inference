@@ -74,7 +74,7 @@ roboticstoolbox-python = {git = "https://github.com/nmarticorena/robotics-toolbo
 swift-sim = {git = "https://github.com/nmarticorena/swift.git"}
 spatialgeometry = {git = "https://github.com/nmarticorena/spatialgeometry.git"}
 spatialmath-python = {git = "https://github.com/nmarticorena/spatialmath-python.git"}
-frankx = {path = "../frankx"}
+frankx = {git = "https://github.com/nmarticorena/frankx.git"}
 atomics = ">=1.0.3, <2"
 panda-python = ">=0.8.1, <0.9"
 # diffrobot = {git = "https://github.com/krishanrana/diffrobot.git" , rev = "cd0179361c464279909d93db74c342852762df4f"}
