@@ -23,20 +23,6 @@ class TrainingParams:
 
 
 @dataclass
-class DiffusionConfig:
-    """DDPM parameters"""
-
-    num_diffusion_iters = 100
-    "diffusion iterations"
-    beta_schedule: str = "squaredcos_cap_v2"
-    "beta schedule"
-    clip_sample: bool = True
-    "enable clip sample"
-    prediction_type: str = "epsilon"
-    "prediction_type"
-
-
-@dataclass
 class VisionConfig:
     """Vision feature configuration"""
 
@@ -65,12 +51,24 @@ class BaseModel:
 @dataclass
 class RSIMLE(BaseModel):
     name: str = "rs_iml"
+    "Name used to distinguish between small variations of the method"
+    n_samples_per_condition: int = 10
+    "Number od sampled per condition for RS-IMLE"
+    epsilon: float = 0.1
+    "Epsilon for RS-IMLE loss"
 
 
 @dataclass
 class Diffusion(BaseModel):
-    ddpm: DiffusionConfig = field(default_factory=DiffusionConfig)
     name = "diffusion"
+    num_diffusion_iters = 100
+    "diffusion iterations"
+    beta_schedule: str = "squaredcos_cap_v2"
+    "beta schedule"
+    clip_sample: bool = True
+    "enable clip sample"
+    prediction_type: str = "epsilon"
+    "prediction_type"
 
 
 @dataclass
