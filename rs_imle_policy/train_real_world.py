@@ -1,4 +1,3 @@
-import argparse
 import torch
 import torch.nn as nn
 from tqdm.auto import tqdm
@@ -9,70 +8,6 @@ import copy
 import time
 from policy import Policy
 import os
-
-
-def parse_args():
-    parser = argparse.ArgumentParser(description="Train a model for robotic pushing")
-    parser.add_argument(
-        "--dataset_path", type=str, default="data/t_block_1", help="Path to the dataset"
-    )
-    parser.add_argument(
-        "--task_name", type=str, default="default", help="Name of the task"
-    )
-    parser.add_argument(
-        "--pred_horizon", type=int, default=16, help="Prediction horizon"
-    )
-    parser.add_argument(
-        "--obs_horizon", type=int, default=2, help="Observation horizon"
-    )
-    parser.add_argument("--action_horizon", type=int, default=8, help="Action horizon")
-    parser.add_argument("--batch_size", type=int, default=64, help="Batch size")
-    parser.add_argument(
-        "--num_workers", type=int, default=11, help="Number of workers for data loading"
-    )
-    parser.add_argument(
-        "--num_epochs", type=int, default=1200, help="Number of training epochs"
-    )
-    parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate")
-    parser.add_argument("--weight_decay", type=float, default=1e-6, help="Weight decay")
-    parser.add_argument(
-        "--num_diffusion_iters",
-        type=int,
-        default=100,
-        help="Number of diffusion iterations",
-    )
-    parser.add_argument(
-        "--device", type=str, default="cuda", help="Device to use for training"
-    )
-    parser.add_argument(
-        "--eval_interval",
-        type=int,
-        default=1,
-        help="Interval for evaluation during training",
-    )
-    parser.add_argument(
-        "--num_eval_episodes", type=int, default=1, help="Number of evaluation episodes"
-    )
-    parser.add_argument(
-        "--method",
-        type=str,
-        choices=["diffusion", "rs_imle"],
-        default="diffusion",
-        help="Training method",
-    )
-    parser.add_argument(
-        "--n_samples_per_condition",
-        type=int,
-        default=10,
-        help="Number of samples per condition for RS-IMLE",
-    )
-    parser.add_argument(
-        "--epsilon", type=float, default=0.1, help="Epsilon for RS-IMLE loss"
-    )
-    parser.add_argument(
-        "--use_ema_for_eval", action="store_true", help="Use EMA for evaluation"
-    )
-    return parser.parse_args()
 
 
 def rs_imle_loss(real_samples, fake_samples, epsilon=0.1):
@@ -220,26 +155,32 @@ def train(args, nets, dataloader, noise_scheduler, optimizer, lr_scheduler, ema)
 
 
 def main():
-    args = parse_args()
+    import tyro
+    from rs_imle_policy.configs.train_config import TrainConfig
+
+    args = tyro.cli(TrainConfig)
     wandb.init(project=args.task_name, config=args)
 
     # change wandb name
-    wandb.run.name = f"{wandb.run.name}_{args.method}_25p"
+    wandb.run.name = f"{wandb.run.name}_{args.model.name}_25p"
 
     dataset = PolicyDataset(
-        args.dataset_path, args.pred_horizon, args.obs_horizon, args.action_horizon
+        args.dataset_path,
+        args.model.pred_horizon,
+        args.model.obs_horizon,
+        args.model.action_horizon,
     )
     # dataset = FilteredDatasetWrapper(dataset, 0.1)
     dataloader = torch.utils.data.DataLoader(
         dataset,
-        batch_size=args.batch_size,
-        num_workers=args.num_workers,
+        batch_size=args.training_params.batch_size,
+        num_workers=args.training_params.num_workers,
         shuffle=True,
         pin_memory=True,
         persistent_workers=False,
     )
 
-    policy = Policy(config_file="pick_place_config")
+    policy = Policy(config=args.model)
     nets = policy.nets
 
     train(
