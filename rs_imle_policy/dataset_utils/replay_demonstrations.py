@@ -1,18 +1,25 @@
-from diffrobot.robot.visualizer import RobotViz
+from rs_imle_policy.visualizer.rtb import RobotViz
 import spatialmath as sm
 import numpy as np
 from rs_imle_policy.dataset import PolicyDataset, unnormalize_data
+from rs_imle_policy.configs.train_config import LoaderConfig, VisionConfig
 import rs_imle_policy.utilities as utils
 import cv2
 import torch
 import spatialgeometry as sg
 
+import tyro
+
+args = tyro.cli(LoaderConfig)
+
+vision_config = tyro.extras.from_yaml(
+    VisionConfig, open(args.dataset_path / "vision_config.yml")
+)
+
 dataset = PolicyDataset(
-    "/media/nmarticorena/DATA/imitation_learning/pick_and_place_ball_new_camera/",
-    pred_horizon=16,
-    obs_horizon=2,
-    action_horizon=8,
-    mode="test",
+    args.dataset_path,
+    vision_config=vision_config,
+    visualize=True,
 )
 rlds = dataset.rlds
 env = RobotViz()
@@ -32,7 +39,9 @@ for episode in rlds:
         if idx % 2 != 0:
             continue
 
-        gello_q = ep_data["gello_q"][idx]
+        gello_q = unnormalize_data(ep_data["gello_q"][idx], dataset.stats["gello_q"])
+        robot_q = unnormalize_data(ep_data["robot_q"][idx], dataset.stats["robot_q"])
+
         X_BE_gello = env.robot.fkine(np.array(gello_q), "panda_link8")
 
         # create a pose at 0,0,0
@@ -59,18 +68,14 @@ for episode in rlds:
 
         robot_pos.T = r_pos
 
-        print("norm: ", pose.t)
-        # print('actual: ', ep_data['action'][idx])
-
-        # action = ep_data['action'][idx]
-        # robot_pos = ep_data['robot_pos'][idx]
-
-        env.step(ep_data["robot_q"][idx], ep_data["gello_q"][idx])
+        env.step(robot_q, gello_q)
 
         # show image
-        wrist_frames = ep_data_video["wrist"][idx : idx + 2]
-        side_frames = ep_data_video["side"][idx : idx + 2]
-        merged = np.hstack([wrist_frames[0], side_frames[0]])
+        frames = []
+        for camera in vision_config.cameras:
+            frame = ep_data_video[camera.name][idx]
+            frames.append(frame)
+        merged = np.hstack(frames)
 
         # show one combined window
         cv2.imshow("viewer", merged)

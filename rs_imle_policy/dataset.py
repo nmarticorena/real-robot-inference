@@ -1,4 +1,5 @@
 import os
+import pathlib
 import json
 import numpy as np
 import torch
@@ -15,6 +16,8 @@ import pickle as pkl
 
 import rs_imle_policy.utilities as utils
 import spatialmath as sm
+from rs_imle_policy.configs.train_config import VisionConfig
+from collections import defaultdict
 
 
 # Helper function to get normalization stats
@@ -40,17 +43,26 @@ def unnormalize_data(ndata, stats):
 class PolicyDataset(Dataset):
     def __init__(
         self,
-        dataset_path: str,
-        pred_horizon: int,
-        obs_horizon: int,
-        action_horizon: int,
+        dataset_path: pathlib.Path,
+        pred_horizon: int = 1,
+        obs_horizon: int = 1,
+        action_horizon: int = 1,
         transform: Optional[Callable] = None,
-        mode="train",
+        low_dim_obs_keys: list[str] = [],
+        action_keys: list[str] = [],
+        vision_config: VisionConfig = VisionConfig(),
+        visualize: bool = False,
     ):
         self.dataset_path = dataset_path
         self.pred_horizon = pred_horizon
         self.obs_horizon = obs_horizon
         self.action_horizon = action_horizon
+
+        self.low_dim_obs_keys = low_dim_obs_keys
+        self.action_keys = action_keys
+
+        self.vision_config = vision_config
+
         self.transform = transform
         self.robot = rtb.models.Panda()
 
@@ -68,21 +80,20 @@ class PolicyDataset(Dataset):
         # Load all episodes and create sample indices
         self.rlds = self.create_rlds_dataset()
         # Store video paths
-        self.video_paths = self.get_video_paths()
+        # self.video_paths = self.get_video_paths()
         # Compute statistics for normalization
-        # self.stats = {'agent_pos': None, 'action': None} # TODO: Replace with defaultdict
-        self.stats = {}
+        self.stats = defaultdict(lambda: dict)
         self.compute_normalization_stats()
 
-        # save stats
-        with open(os.path.join(self.dataset_path, "stats.pkl"), "wb") as f:
-            pkl.dump(self.stats, f)
+        if not visualize:
+            # save stats
+            with open(os.path.join(self.dataset_path, "stats.pkl"), "wb") as f:
+                pkl.dump(self.stats, f)
 
         # Create sample indices
         self.indices = self.create_sample_indices(
             self.rlds, sequence_length=pred_horizon
         )
-
         # Normalize the data
         self.normalize_rlds()
 
@@ -101,30 +112,30 @@ class PolicyDataset(Dataset):
                 ]
             )
 
-    def get_video_paths(self):
-        video_paths = {}
-        episodes = sorted(
-            os.listdir(os.path.join(self.dataset_path, "episodes")),
-            key=lambda x: int(x),
-        )
-        for episode in episodes:
-            video_file_wrist = os.path.join(
-                self.dataset_path, "episodes", episode, "video", "0.mp4"
-            )
-            video_file_top = os.path.join(
-                self.dataset_path, "episodes", episode, "video", "1.mp4"
-            )
-            video_file_side = os.path.join(
-                self.dataset_path, "episodes", episode, "video", "2.mp4"
-            )
-
-            all_videos = {
-                "wrist": video_file_wrist,
-                "top": video_file_top,
-                "side": video_file_side,
-            }
-            video_paths[int(episode)] = all_videos
-        return video_paths
+    # def get_video_paths(self):
+    #     video_paths = {}
+    #     episodes = sorted(
+    #         os.listdir(os.path.join(self.dataset_path, "episodes")),
+    #         key=lambda x: int(x),
+    #     )
+    #     for episode in episodes:
+    #         video_file_wrist = os.path.join(
+    #             self.dataset_path, "episodes", episode, "video", "0.mp4"
+    #         )
+    #         video_file_top = os.path.join(
+    #             self.dataset_path, "episodes", episode, "video", "1.mp4"
+    #         )
+    #         video_file_side = os.path.join(
+    #             self.dataset_path, "episodes", episode, "video", "2.mp4"
+    #         )
+    #
+    #         all_videos = {
+    #             "wrist": video_file_wrist,
+    #             "top": video_file_top,
+    #             "side": video_file_side,
+    #         }
+    #         video_paths[int(episode)] = all_videos
+    #     return video_paths
 
     def create_rlds_dataset(self):
         rlds = {}
@@ -158,13 +169,6 @@ class PolicyDataset(Dataset):
                 X_BE_leader
             )
 
-            state = np.concatenate(
-                [X_BE_follower_pos, X_BE_follower_orien, gripper_width], axis=-1
-            )
-            action = np.concatenate(
-                [X_BE_leader_pos, X_BE_leader_orien, gripper_action], axis=-1
-            )
-
             rlds[episode_index] = {
                 "robot_pos": X_BE_follower_pos,
                 "robot_orien": X_BE_follower_orien,
@@ -175,34 +179,47 @@ class PolicyDataset(Dataset):
                 "X_BE": X_BE_follower,
                 "gello_q": df["gello_q"].tolist(),
                 "robot_q": df["robot_q"].tolist(),
-                "state": state,
-                "action": action,
             }
+
+            if len(self.low_dim_obs_keys) != 0:
+                state = np.concatenate(
+                    [rlds[episode_index][key] for key in self.low_dim_obs_keys], axis=-1
+                )
+                action = np.concatenate(
+                    [rlds[episode_index][key] for key in self.action_keys], axis=-1
+                )
+
+                rlds[episode_index]["state"] = state
+                rlds[episode_index]["action"] = action
         return rlds
 
     def normalize_rlds(self):
         for episode in self.rlds.keys():
-            self.rlds[episode]["robot_pos"] = normalize_data(
-                np.array(self.rlds[episode]["robot_pos"]), self.stats["robot_pos"]
-            )
-            self.rlds[episode]["robot_orien"] = normalize_data(
-                np.array(self.rlds[episode]["robot_orien"]), self.stats["robot_orien"]
-            )
-            self.rlds[episode]["gripper_state"] = normalize_data(
-                np.array(self.rlds[episode]["gripper_state"]),
-                self.stats["gripper_state"],
-            )
-
-            self.rlds[episode]["action_pos"] = normalize_data(
-                np.array(self.rlds[episode]["action_pos"]), self.stats["action_pos"]
-            )
-            self.rlds[episode]["action_orien"] = normalize_data(
-                np.array(self.rlds[episode]["action_orien"]), self.stats["action_orien"]
-            )
-            self.rlds[episode]["action_gripper"] = normalize_data(
-                np.array(self.rlds[episode]["action_gripper"]),
-                self.stats["action_gripper"],
-            )
+            for key in self.rlds[episode].keys():
+                self.rlds[episode][key] = normalize_data(
+                    np.array(self.rlds[episode][key]), self.stats[key]
+                )
+            # self.rlds[episode]["robot_pos"] = normalize_data(
+            #     np.array(self.rlds[episode]["robot_pos"]), self.stats["robot_pos"]
+            # )
+            # self.rlds[episode]["robot_orien"] = normalize_data(
+            #     np.array(self.rlds[episode]["robot_orien"]), self.stats["robot_orien"]
+            # )
+            # self.rlds[episode]["gripper_state"] = normalize_data(
+            #     np.array(self.rlds[episode]["gripper_state"]),
+            #     self.stats["gripper_state"],
+            # )
+            #
+            # self.rlds[episode]["action_pos"] = normalize_data(
+            #     np.array(self.rlds[episode]["action_pos"]), self.stats["action_pos"]
+            # )
+            # self.rlds[episode]["action_orien"] = normalize_data(
+            #     np.array(self.rlds[episode]["action_orien"]), self.stats["action_orien"]
+            # )
+            # self.rlds[episode]["action_gripper"] = normalize_data(
+            #     np.array(self.rlds[episode]["action_gripper"]),
+            #     self.stats["action_gripper"],
+            # )
         return
 
     def create_sample_indices(self, rlds_dataset, sequence_length=16):
@@ -228,15 +245,8 @@ class PolicyDataset(Dataset):
             )
             self.stats[key] = get_data_stats(data)
 
-        get_data("robot_pos")
-        get_data("robot_orien")
-        get_data("gripper_state")
-        get_data("action_pos")
-        get_data("action_orien")
-        get_data("action_gripper")
-
-        get_data("state")
-        get_data("action")
+        for keys in self.rlds[0].keys():
+            get_data(keys)
 
     def sample_sequence(self, episode, buffer_start_idx, buffer_end_idx):
         agent_pos = self.rlds[episode]["robot_pos"][buffer_start_idx:buffer_end_idx]
@@ -268,11 +278,9 @@ class PolicyDataset(Dataset):
         frames = {}
         video = self.cached_dataset[str(episode)]
         # only need 2 frames
-        wrist_frames = video["wrist"][start_frame : start_frame + self.obs_horizon]
-        side_frames = video["side"][start_frame : start_frame + self.obs_horizon]
-        # apply transform
-        frames["wrist"] = np.array([self.transform(frame) for frame in wrist_frames])
-        frames["side"] = np.array([self.transform(frame) for frame in side_frames])
+        for key in video.keys():
+            frame = video[key][start_frame : start_frame + self.obs_horizon]
+            frames[key] = [self.transform(f) for f in frame]
 
         return frames
 

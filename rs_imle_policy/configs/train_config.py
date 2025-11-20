@@ -20,6 +20,37 @@ class TrainingParams:
     lr_scheduler_profile: str = "cosine"
     "Learning schedule profile"
     num_warmup_steps: int = 500
+    eval_interval: int = 10
+    "Interval for evaluation during training"
+    num_eval_episodes: int = 1
+
+
+@dataclass
+class CameraConfig:
+    """Realsense Camera configuration"""
+
+    name: str
+    "Name of the camera"
+    serial_number: str
+    "Serial number of the camera"
+    exposure: int
+    gain: int
+
+
+@dataclass
+class WristCamera(CameraConfig):
+    name: str = "wrist"
+    serial_number: str = "123622270136"
+    exposure: int = 5000
+    gain: int = 60
+
+
+@dataclass
+class SideCamera(CameraConfig):
+    name: str = "side"
+    serial_number: str = "035122250692"
+    exposure: int = 100
+    gain: int = 60
 
 
 @dataclass
@@ -28,8 +59,15 @@ class VisionConfig:
 
     vision_features_dim: int = 512
     "Feature dimension of the vision encoder"
-    num_cameras: int = 2
-    "Cameras view used"
+    # cameras_view: tuple[CameraConfig, ...] = ("wrist", "side")
+    cameras: tuple[CameraConfig, ...] = (WristCamera(), SideCamera())
+    "Name of the cameras view used"
+    img_shape: tuple[int, int] = (240, 320)
+    resolution: tuple[int, int] = (640, 480)
+    depth_resolution: tuple[int, int] = (640, 480)
+    frame_rate: int = 30
+    rgb_enabled: bool = True
+    depth_enabled: bool = False
 
 
 @dataclass
@@ -81,6 +119,26 @@ class TrainConfig:
     "Training parameters"
     model: Diffusion | RSIMLE = field(default_factory=RSIMLE)
     "Model used, either RS_IMLE or Diffusion"
+    task_name: str = "default"
+    "Name of the task to train on"
+
+
+@dataclass
+class LoaderConfig:
+    dataset_path: pathlib.Path
+    "Path to dataset"
+
+
+@dataclass
+class InferenceConfig:
+    exp_name: str
+    "Name for experiment, the method will be appended in the end"
+    weights_path: pathlib.Path
+    "Path to weights"
+    model: Diffusion | RSIMLE = field(default_factory=RSIMLE)
+    "Model used, either RS_IMLE or Diffusion"
+    task_name: str = "default"
+    "Name of the task to train on"
 
 
 if __name__ == "__main__":
