@@ -6,8 +6,10 @@ import numpy as np
 import tqdm
 import tyro
 
+from rs_imle_policy.configs.train_config import VisionConfig
 
-def convert_to_h5(dataset_path: str, /):
+
+def convert_to_h5(dataset_path: str, /, vision_config: VisionConfig):
     dataset_name = dataset_path + "/images.h5"
     # Open an HDF5 file in write mode
     with h5py.File(dataset_name, "w") as h5f:
@@ -15,41 +17,31 @@ def convert_to_h5(dataset_path: str, /):
             os.listdir(os.path.join(dataset_path, "episodes")), key=lambda x: int(x)
         )
         for episode in tqdm.tqdm(episodes):
-            video_wrist = os.path.join(
-                dataset_path, "episodes", episode, "video", "0.mp4"
-            )
-            video_side = os.path.join(
-                dataset_path, "episodes", episode, "video", "1.mp4"
-            )
-
-            # Use PIMS to read the video files
-            pims_video_wrist = pims.PyAVReaderIndexed(video_wrist)
-            pims_video_side = pims.PyAVReaderIndexed(video_side)
-
-            # Convert frames to NumPy arrays and resize
-            wrist_frames = np.array(
-                [cv2.resize(np.array(frame), (320, 240)) for frame in pims_video_wrist]
-            )
-            side_frames = np.array(
-                [cv2.resize(np.array(frame), (320, 240)) for frame in pims_video_side]
-            )
-
-            # Create a group for each episode in HDF5
             grp = h5f.create_group(f"{episode}")
+            for ix, cam in enumerate(vision_config.cameras):
+                cam_name = cam.name
+                video = os.path.join(
+                    dataset_path, "episodes", episode, "video", f"{ix}.mp4"
+                )
 
-            # Chunking size is critical: Use (chunk_frames, height, width, channels)
-            # Assuming typical access of 16 frames at a time.
-            chunk_size = (16, 240, 320, 3)
+                pims_video = pims.PyAVReaderIndexed(video)
+                frames = np.array(
+                    [
+                        cv2.resize(np.array(frame), vision_config.img_shape[::-1])
+                        for frame in pims_video
+                    ]
+                )
 
-            # Store wrist and side video frames in separate datasets with chunking
-            grp.create_dataset(
-                "wrist", data=wrist_frames, compression="gzip", chunks=chunk_size
-            )
-            grp.create_dataset(
-                "side", data=side_frames, compression="gzip", chunks=chunk_size
-            )
+                # Assuming typical access of 16 frames at a time.
+                chunk_size = (16, *vision_config.img_shape, 3)
 
+                # Store wrist and side video frames in separate datasets with chunking
+                grp.create_dataset(
+                    cam_name, data=frames, compression="gzip", chunks=chunk_size
+                )
     print(f"Video data saved to {dataset_name}")
+    with open(dataset_path + "/vision_config.yml", "w") as f:
+        f.write(tyro.extras.to_yaml(vision_config))
 
 
 if __name__ == "__main__":

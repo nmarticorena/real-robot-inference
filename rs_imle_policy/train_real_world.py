@@ -1,4 +1,6 @@
 import torch
+import tyro
+import shutil
 import torch.nn as nn
 from tqdm.auto import tqdm
 from dataset import PolicyDataset
@@ -8,6 +10,8 @@ import copy
 import time
 from policy import Policy
 import os
+
+from rs_imle_policy.configs.train_config import TrainConfig, Diffusion, RSIMLE
 
 
 def rs_imle_loss(real_samples, fake_samples, epsilon=0.1):
@@ -36,30 +40,35 @@ def rs_imle_loss(real_samples, fake_samples, epsilon=0.1):
     return loss
 
 
-def train(args, nets, dataloader, noise_scheduler, optimizer, lr_scheduler, ema):
+def train(
+    args: TrainConfig, nets, dataloader, noise_scheduler, optimizer, lr_scheduler, ema
+):
     nets.train()
 
-    folder = os.path.join("saved_weights", args.task_name, args.method + "_25p")
+    folder = os.path.join("saved_weights", args.task_name, args.model.name + "_25p")
     os.makedirs(folder, exist_ok=True)
 
-    # make dir if not exist
+    config = tyro.extras.to_yaml(args)
+    with open(os.path.join(folder, "config.yaml"), "w") as f:
+        f.write(config)
 
-    for epoch in range(args.num_epochs):
+    # make dir if not exist
+    n_epochs = args.training_params.num_epochs
+    device = args.model.device
+    obs_horizon = args.model.obs_horizon
+
+    for epoch in range(n_epochs):
         epoch_loss = []
         start_time = time.time()
         with tqdm(
-            dataloader, desc=f"Epoch {epoch + 1}/{args.num_epochs}", leave=False
+            dataloader, desc=f"Epoch {epoch + 1}/{n_epochs}", leave=False
         ) as tepoch:
             for batch in tepoch:
-                nimage_side = batch["frames_side"][:, : args.obs_horizon].to(
-                    args.device
-                )
-                nimage_wrist = batch["frames_wrist"][:, : args.obs_horizon].to(
-                    args.device
-                )
-                nagent = batch["state"][:, : args.obs_horizon].to(args.device)
+                nimage_side = batch["frames_side"][:, :obs_horizon].to(device)
+                nimage_wrist = batch["frames_wrist"][:, :obs_horizon].to(device)
+                nagent = batch["state"][:, :obs_horizon].to(device)
 
-                naction = batch["action"].to(args.device)
+                naction = batch["action"].to(device)
                 B = naction.shape[0]
 
                 image_features_side = nets["vision_encoder_side"](
@@ -81,14 +90,14 @@ def train(args, nets, dataloader, noise_scheduler, optimizer, lr_scheduler, ema)
                 )
                 obs_cond = obs_features.flatten(start_dim=1)
 
-                if args.method == "diffusion":
+                if isinstance(args.model, Diffusion):
                     print("Using diffusion loss")
-                    noise = torch.randn(naction.shape, device=args.device)
+                    noise = torch.randn(naction.shape, device=device)
                     timesteps = torch.randint(
                         0,
                         noise_scheduler.config.num_train_timesteps,
                         (B,),
-                        device=args.device,
+                        device=device,
                     ).long()
                     noisy_actions = noise_scheduler.add_noise(naction, noise, timesteps)
 
@@ -96,24 +105,26 @@ def train(args, nets, dataloader, noise_scheduler, optimizer, lr_scheduler, ema)
                         noisy_actions, timesteps, global_cond=obs_cond
                     )
                     loss = nn.functional.mse_loss(noise_pred, noise)
-                elif args.method == "rs_imle":
+                elif isinstance(args.model, RSIMLE):
                     noise = torch.randn(
-                        B * args.n_samples_per_condition,
+                        B * args.model.n_samples_per_condition,
                         *naction.shape[1:],
-                        device=args.device,
+                        device=device,
                     )
                     repeated_obs_cond = obs_cond.repeat_interleave(
-                        args.n_samples_per_condition, dim=0
+                        args.model.n_samples_per_condition, dim=0
                     )
 
                     fake_actions = nets["generator"](
                         noise, global_cond=repeated_obs_cond
                     )
                     fake_actions = fake_actions.reshape(
-                        B, args.n_samples_per_condition, *naction.shape[1:]
+                        B, args.model.n_samples_per_condition, *naction.shape[1:]
                     )
 
-                    loss = rs_imle_loss(naction, fake_actions, args.epsilon)
+                    loss = rs_imle_loss(naction, fake_actions, args.model.epsilon)
+                else:
+                    raise NotImplementedError
 
                 # If loss is 0, skip backprop and log flag in wandb
                 if loss == 0:
@@ -136,14 +147,21 @@ def train(args, nets, dataloader, noise_scheduler, optimizer, lr_scheduler, ema)
         ema.copy_to(ema_nets.parameters())
 
         # save a checkpoint every 10 epochs
-        if (epoch) % 10 == 0:
-            torch.save(nets.state_dict(), f"{folder}/net_epoch_{epoch}.pth")
-            torch.save(ema_nets.state_dict(), f"{folder}/ema_net_epoch_{epoch}.pth")
+        if (epoch) % args.training_params.save_period == 0:
+            torch.save(nets.state_dict(), f"{folder}/net_epoch_{epoch:04d}.pth")
+            shutil.copy(
+                f"{folder}/net_epoch_{epoch:04d}.pth", f"{folder}/net_epoch_last.pth"
+            )
+            torch.save(ema_nets.state_dict(), f"{folder}/ema_net_epoch_{epoch:04d}.pth")
+            shutil.copy(
+                f"{folder}/ema_net_epoch_{epoch:04d}.pth",
+                f"{folder}/ema_net_epoch_last.pth",
+            )
 
         avg_loss = np.mean(epoch_loss)
         wandb.log({"avg_train_loss": avg_loss, "epoch": epoch})
         print(
-            f"Epoch {epoch + 1}/{args.num_epochs} - Avg. Loss: {avg_loss:.4f} - Time: {time.time() - start_time:.2f}s"
+            f"Epoch {epoch + 1}/{n_epochs} - Avg. Loss: {avg_loss:.4f} - Time: {time.time() - start_time:.2f}s"
         )
         # If the loss is 0 for a whole epoch, log flag in wandb
         if avg_loss == 0:
@@ -155,10 +173,11 @@ def train(args, nets, dataloader, noise_scheduler, optimizer, lr_scheduler, ema)
 
 
 def main():
-    import tyro
-    from rs_imle_policy.configs.train_config import TrainConfig
+    from rs_imle_policy.configs.default_configs import (
+        PickPlaceDiffusionConfig as Config,
+    )
 
-    args = tyro.cli(TrainConfig)
+    args = tyro.cli(Config)
     wandb.init(project=args.task_name, config=args)
 
     # change wandb name
@@ -169,6 +188,8 @@ def main():
         args.model.pred_horizon,
         args.model.obs_horizon,
         args.model.action_horizon,
+        low_dim_obs_keys=args.model.lowdim_obs_keys,
+        action_keys=args.model.action_keys,
     )
     # dataset = FilteredDatasetWrapper(dataset, 0.1)
     dataloader = torch.utils.data.DataLoader(
@@ -177,10 +198,10 @@ def main():
         num_workers=args.training_params.num_workers,
         shuffle=True,
         pin_memory=True,
-        persistent_workers=False,
+        persistent_workers=True,
     )
 
-    policy = Policy(config=args.model)
+    policy = Policy(config=args)
     nets = policy.nets
 
     train(

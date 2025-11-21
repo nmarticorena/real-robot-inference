@@ -4,7 +4,6 @@ from rs_imle_policy.network import (
     DiffusionConditionalUnet1D,
     GeneratorConditionalUnet1D,
 )
-from rs_imle_policy.utilities import get_config
 import torch
 import torch.nn as nn
 from diffusers.training_utils import EMAModel
@@ -15,66 +14,69 @@ import os
 import copy
 import numpy as np
 import torchvision.transforms as transforms
+from rs_imle_policy.configs.train_config import (
+    TrainConfig,
+    InferenceConfig,
+    Diffusion,
+    RSIMLE,
+)
+from typing import Union
 
 
 class Policy:
-    def __init__(self, config_file=None, saved_run_name=None, mode="train"):
-        self.config_file = config_file
-        self.params = get_config(self.config_file)
-        self.mode = mode
-        self.method = self.params.method
-        self.nets = self.create_networks()
+    def __init__(self, config: Union[InferenceConfig, TrainConfig]):
+        self.config = config
+        self.model_config = config.model
 
-        if self.params.method == "diffusion":
+        if isinstance(self.model_config, Diffusion):
             self.noise_scheduler = DDPMScheduler(
-                num_train_timesteps=self.params.num_diffusion_iters,
-                beta_schedule="squaredcos_cap_v2",
-                clip_sample=True,
-                prediction_type="epsilon",
-            )
+                num_train_timesteps=self.model_config.num_diffusion_iters,
+                beta_schedule=self.model_config.beta_schedule,
+                clip_sample=self.model_config.clip_sample,
+                prediction_type=self.model_config.prediction_type,
+            )  # TODO: Check if I can do *kwargs here
         else:
             self.noise_scheduler = None
 
-        self.ema = EMAModel(parameters=self.nets.parameters(), power=0.75)
-
         self.precision = torch.float32
-
-        self.device = self.params.device
-
-        if mode == "train":
-            # dataset = PushTImageDataset(args.dataset_path, args.pred_horizon, args.obs_horizon, args.action_horizon)
+        self.device = self.model_config.device
+        if isinstance(self.config, TrainConfig):
             self.dataset = PolicyDataset(
-                self.params.dataset_path,
-                self.params.pred_horizon,
-                self.params.obs_horizon,
-                self.params.action_horizon,
-            )
-            # dataset = FilteredDatasetWrapper(dataset, 0.1)
+                self.config.dataset_path,
+                self.model_config.pred_horizon,
+                self.model_config.obs_horizon,
+                self.model_config.action_horizon,
+                low_dim_obs_keys=self.model_config.lowdim_obs_keys,
+                action_keys=self.model_config.action_keys,
+            )  # TODO: Check why does we initialize this twice
             self.dataloader = torch.utils.data.DataLoader(
                 self.dataset,
-                batch_size=self.params.batch_size,
-                num_workers=self.params.num_workers,
+                batch_size=self.config.training_params.batch_size,
+                num_workers=self.config.training_params.num_workers,
                 shuffle=True,
                 pin_memory=True,
                 persistent_workers=True,
             )
+            self.nets = self.create_networks()
+            self.ema = EMAModel(parameters=self.nets.parameters(), power=0.75)
 
             self.optimizer = torch.optim.AdamW(
                 params=self.nets.parameters(),
-                lr=self.params.lr,
-                weight_decay=self.params.weight_decay,
+                lr=self.config.training_params.lr,
+                weight_decay=self.config.training_params.weight_decay,
             )
             self.lr_scheduler = get_scheduler(
-                name=self.params.lr_scheduler_profile,
+                name=self.config.training_params.lr_scheduler_profile,
                 optimizer=self.optimizer,
-                num_warmup_steps=self.params.num_warmup_steps,
-                num_training_steps=len(self.dataloader) * self.params.num_epochs,
+                num_warmup_steps=self.config.training_params.num_warmup_steps,
+                num_training_steps=len(self.dataloader)
+                * self.config.training_params.num_epochs,
             )
 
             print("Training Mode.")
 
-        if mode == "infer":
-            self.load_weights(saved_run_name)
+        elif isinstance(self.config, InferenceConfig):
+            # self.load_weights(saved_run_name) TODO: Fix
 
             # stats_path = os.path.join("/mnt/droplet/", 'stats.pkl')
             stats_path = os.path.join("saved_weights/default/rs_imle_25p/", "stats.pkl")
@@ -92,20 +94,14 @@ class Policy:
             print("Inference Mode.")
 
     def load_weights(self, saved_run_name, load_best=True):
-        if self.method == "diffusion":
+        print(saved_run_name)
+        if isinstance(self.config, Diffusion):
             print("Loading pretrained weights for diffusion")
             self.ema_nets = copy.deepcopy(self.nets)
 
-            # fpath_ema = os.path.join("/mnt/droplet/", "ema_net.pth")
-            # fpath_nets = os.path.join("/mnt/droplet/", "net.pth")
-
             fpath_ema = os.path.join(
-                "saved_weights/diffusion_policy_10/", "ema_net_epoch_1000.pth"
+                "saved_weights/diffusion_policy_10/", "ema_net_epoch_.pth"
             )
-            # fpath_nets = os.path.join("saved_weights/diffusion_policy_1.0/", "net.pth")
-
-            # state_dict_nets = torch.load(fpath_nets, map_location='cuda')
-            # self.nets.load_state_dict(state_dict_nets)
             state_dict_ema = torch.load(fpath_ema, map_location="cuda")
             self.ema_nets.load_state_dict(state_dict_ema)
 
@@ -115,11 +111,9 @@ class Policy:
 
             self.ema = EMAModel(parameters=self.ema_nets.parameters(), power=0.75)
 
-        elif self.method == "rs_imle":
+        elif isinstance(self.config, RSIMLE):
             print("Loading pretrained weights for rs_imle")
-            fpath = os.path.join(
-                "saved_weights/default/rs_imle_25p/", "net_epoch_1190.pth"
-            )
+            fpath = os.path.join("saved_weights//rs_imle_25p/", "net_epoch_last.pth")
             self.nets.load_state_dict(torch.load(fpath, map_location="cuda"))
 
         print("Pretrained weights loaded.")
@@ -131,10 +125,10 @@ class Policy:
         vision_encoder_wrist = get_resnet("resnet18")
         vision_encoder_wrist = replace_bn_with_gn(vision_encoder_wrist)
 
-        if self.method == "diffusion":
+        if isinstance(self.config.model, Diffusion):
             noise_pred_net = DiffusionConditionalUnet1D(
-                input_dim=self.params.action_dim,
-                global_cond_dim=self.params.obs_dim * self.params.obs_horizon,
+                input_dim=self.dataset.action_shape,
+                global_cond_dim=self.dataset.obs_shape * self.model_config.obs_horizon,
             )
             nets = nn.ModuleDict(
                 {
@@ -143,10 +137,10 @@ class Policy:
                     "noise_pred_net": noise_pred_net,
                 }
             )
-        elif self.method == "rs_imle":
+        elif isinstance(self.config.model, RSIMLE):
             generator = GeneratorConditionalUnet1D(
-                input_dim=self.params.action_dim,
-                global_cond_dim=self.params.obs_dim * self.params.obs_horizon,
+                input_dim=self.dataset.action_shape,
+                global_cond_dim=self.dataset.obs_shape * self.model_config.obs_horizon,
             )
             nets = nn.ModuleDict(
                 {
@@ -156,4 +150,4 @@ class Policy:
                 }
             )
 
-        return nets.to(self.params.device)
+        return nets.to(self.model_config.device)

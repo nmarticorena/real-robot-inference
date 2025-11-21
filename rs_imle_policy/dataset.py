@@ -48,8 +48,8 @@ class PolicyDataset(Dataset):
         obs_horizon: int = 1,
         action_horizon: int = 1,
         transform: Optional[Callable] = None,
-        low_dim_obs_keys: list[str] = [],
-        action_keys: list[str] = [],
+        low_dim_obs_keys: tuple[str, ...] = (),
+        action_keys: tuple[str, ...] = (),
         vision_config: VisionConfig = VisionConfig(),
         visualize: bool = False,
     ):
@@ -88,7 +88,7 @@ class PolicyDataset(Dataset):
         if not visualize:
             # save stats
             with open(os.path.join(self.dataset_path, "stats.pkl"), "wb") as f:
-                pkl.dump(self.stats, f)
+                pkl.dump(dict(self.stats), f)
 
         # Create sample indices
         self.indices = self.create_sample_indices(
@@ -112,30 +112,11 @@ class PolicyDataset(Dataset):
                 ]
             )
 
-    # def get_video_paths(self):
-    #     video_paths = {}
-    #     episodes = sorted(
-    #         os.listdir(os.path.join(self.dataset_path, "episodes")),
-    #         key=lambda x: int(x),
-    #     )
-    #     for episode in episodes:
-    #         video_file_wrist = os.path.join(
-    #             self.dataset_path, "episodes", episode, "video", "0.mp4"
-    #         )
-    #         video_file_top = os.path.join(
-    #             self.dataset_path, "episodes", episode, "video", "1.mp4"
-    #         )
-    #         video_file_side = os.path.join(
-    #             self.dataset_path, "episodes", episode, "video", "2.mp4"
-    #         )
-    #
-    #         all_videos = {
-    #             "wrist": video_file_wrist,
-    #             "top": video_file_top,
-    #             "side": video_file_side,
-    #         }
-    #         video_paths[int(episode)] = all_videos
-    #     return video_paths
+        self.low_dim_obs_shape = self.rlds[0]["state"].shape[1]
+        self.img_shape = vision_config.vision_features_dim * len(vision_config.cameras)
+        self.obs_shape = self.low_dim_obs_shape + self.img_shape
+
+        self.action_shape = self.rlds[0]["action"].shape[1]
 
     def create_rlds_dataset(self):
         rlds = {}
@@ -280,7 +261,7 @@ class PolicyDataset(Dataset):
         # only need 2 frames
         for key in video.keys():
             frame = video[key][start_frame : start_frame + self.obs_horizon]
-            frames[key] = [self.transform(f) for f in frame]
+            frames[key] = np.array([self.transform(f) for f in frame])
 
         return frames
 

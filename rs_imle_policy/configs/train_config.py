@@ -23,6 +23,8 @@ class TrainingParams:
     eval_interval: int = 10
     "Interval for evaluation during training"
     num_eval_episodes: int = 1
+    save_period: int = 10
+    "Period (in epochs) to save model checkpoints"
 
 
 @dataclass
