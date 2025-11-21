@@ -10,3 +10,13 @@ class PickPlaceRSMLEConfig(TrainConfig):
             action_keys=("action_pos", "action_orien", "action_gripper"),
         )
     )
+
+
+@dataclass
+class PickPlaceDiffusionConfig(TrainConfig):
+    model: RSIMLE | Diffusion = field(
+        default_factory=lambda: Diffusion(
+            lowdim_obs_keys=("robot_pos", "robot_orien", "gripper_state"),
+            action_keys=("action_pos", "action_orien", "action_gripper"),
+        )
+    )
