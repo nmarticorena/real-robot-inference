@@ -37,6 +37,11 @@ class CameraConfig:
     "Serial number of the camera"
     exposure: int
     gain: int
+    resolution: tuple[int, int] = (640, 480)
+    depth_resolution: tuple[int, int] = (640, 480)
+    frame_rate: int = 10
+    rgb_enabled: bool = True
+    depth_enabled: bool = False
 
 
 @dataclass
@@ -44,6 +49,13 @@ class WristCamera(CameraConfig):
     name: str = "wrist"
     serial_number: str = "123622270136"
     exposure: int = 5000
+    gain: int = 60
+
+
+class TopCamera(CameraConfig):
+    name: str = "top"
+    serial_number: str = "035122250388"
+    exposure: int = 100
     gain: int = 60
 
 
@@ -61,15 +73,10 @@ class VisionConfig:
 
     vision_features_dim: int = 512
     "Feature dimension of the vision encoder"
-    # cameras_view: tuple[CameraConfig, ...] = ("wrist", "side")
-    cameras: tuple[CameraConfig, ...] = (WristCamera(), SideCamera())
-    "Name of the cameras view used"
+    cameras: tuple[str, ...] = ("wrist", "side", "top")
+    # Name and order of the cameras used
     img_shape: tuple[int, int] = (240, 320)
-    resolution: tuple[int, int] = (640, 480)
-    depth_resolution: tuple[int, int] = (640, 480)
-    frame_rate: int = 30
-    rgb_enabled: bool = True
-    depth_enabled: bool = False
+    # resolution used as input to the model
 
 
 @dataclass
@@ -81,6 +88,7 @@ class BaseModel:
     pred_horizon: int = 16
     action_horizon: int = 8
     obs_horizon: int = 2
+    action_relative: bool = False
 
     lowdim_obs_keys: tuple[str, ...] = ()
     action_keys: tuple[str, ...] = ()
