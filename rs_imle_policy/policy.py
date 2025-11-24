@@ -46,8 +46,9 @@ class Policy:
                 self.model_config.pred_horizon,
                 self.model_config.obs_horizon,
                 self.model_config.action_horizon,
-                low_dim_obs_keys=self.model_config.lowdim_obs_keys,
-                action_keys=self.model_config.action_keys,
+                low_dim_obs_keys=self.config.data.lowdim_obs_keys,
+                action_keys=self.config.data.action_keys,
+                vision_config=self.config.data.vision,
             )  # TODO: Check why does we initialize this twice
             self.dataloader = torch.utils.data.DataLoader(
                 self.dataset,
@@ -119,7 +120,7 @@ class Policy:
         print("Pretrained weights loaded.")
 
     def create_networks(self):
-        cameras = self.model_config.vision_config.cameras
+        cameras = self.config.data.vision.cameras
         vision_encoders = {
             f"vision_encoder_{camera}": replace_bn_with_gn(get_resnet("resnet18"))
             for camera in cameras

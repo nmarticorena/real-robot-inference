@@ -262,7 +262,9 @@ class PolicyDataset(Dataset):
         episode, buffer_start_idx, buffer_end_idx = self.indices[idx]
         seq = self.sample_sequence(episode, buffer_start_idx, buffer_end_idx)
 
-        frames = {f"frame_{key}": seq["frames"][key] for key in seq["frames"].keys()}
+        frames = {
+            f"frame_{key}": seq["frames"][key] for key in self.vision_config.cameras
+        }
 
         # Convert to tensors
         state = torch.tensor(seq["state"], dtype=torch.float32)

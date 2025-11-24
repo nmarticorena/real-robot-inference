@@ -1,44 +1,57 @@
-from rs_imle_policy.configs.train_config import TrainConfig, RSIMLE, Diffusion
+from rs_imle_policy.configs.train_config import (
+    TrainConfig,
+    RSIMLE,
+    Diffusion,
+    DataConfig,
+)
 from dataclasses import dataclass, field
 
 
 @dataclass
-class PickPlaceRSMLEConfig(TrainConfig):
-    model: RSIMLE | Diffusion = field(
-        default_factory=lambda: RSIMLE(
-            lowdim_obs_keys=("robot_pos", "robot_orien", "gripper_state"),
-            action_keys=("action_pos", "action_orien", "action_gripper"),
-        )
-    )
+class AbsoluteActionsConfig(DataConfig):
+    """Configuration for absolute action space"""
+
+    action_keys: tuple[str, ...] = ("action_pos", "action_orien", "action_gripper")
+    action_relative: bool = False
 
 
 @dataclass
-class PickPlaceRelativeRSMLEConfig(TrainConfig):
-    model: RSIMLE | Diffusion = field(
-        default_factory=lambda: RSIMLE(
-            lowdim_obs_keys=("robot_pos", "robot_orien", "gripper_state"),
-            action_keys=("relative_pos", "relative_orien", "action_gripper"),
-            action_relative=True,
-        )
-    )
+class RelativeActionsConfig(DataConfig):
+    """Configuration for relative action space"""
+
+    action_keys: tuple[str, ...] = ("relative_pos", "relative_orien", "action_gripper")
+    action_relative: bool = True
 
 
+# RS-IMLE Configurations
+@dataclass
+class PickPlaceRSMLEConfig(TrainConfig):
+    """Pick and place task with RS-IMLE using absolute actions"""
+
+    model: RSIMLE | Diffusion = field(default_factory=lambda: RSIMLE())
+    data: DataConfig = field(default_factory=AbsoluteActionsConfig)
+
+
+@dataclass
+class PickPlaceRSMLERelativeConfig(TrainConfig):
+    """Pick and place task with RS-IMLE using relative actions"""
+
+    model: RSIMLE | Diffusion = field(default_factory=lambda: RSIMLE())
+    data: DataConfig = field(default_factory=RelativeActionsConfig)
+
+
+# Diffusion Configurations
 @dataclass
 class PickPlaceDiffusionConfig(TrainConfig):
-    model: RSIMLE | Diffusion = field(
-        default_factory=lambda: Diffusion(
-            lowdim_obs_keys=("robot_pos", "robot_orien", "gripper_state"),
-            action_keys=("action_pos", "action_orien", "action_gripper"),
-        )
-    )
+    """Pick and place task with Diffusion using absolute actions"""
+
+    model: RSIMLE | Diffusion = field(default_factory=lambda: Diffusion())
+    data: DataConfig = field(default_factory=AbsoluteActionsConfig)
 
 
 @dataclass
 class PickPlaceDiffusionRelativeConfig(TrainConfig):
-    model: RSIMLE | Diffusion = field(
-        default_factory=lambda: Diffusion(
-            lowdim_obs_keys=("robot_pos", "robot_orien", "gripper_state"),
-            action_keys=("relative_pos", "relative_orien", "action_gripper"),
-            action_relative=True,
-        )
-    )
+    """Pick and place task with Diffusion using relative actions"""
+
+    model: RSIMLE | Diffusion = field(default_factory=lambda: Diffusion())
+    data: DataConfig = field(default_factory=RelativeActionsConfig)

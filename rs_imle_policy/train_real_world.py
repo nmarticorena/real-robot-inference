@@ -65,7 +65,7 @@ def train(
     device = args.model.device
     obs_horizon = args.model.obs_horizon
 
-    cams_names = args.model.vision_config.cameras
+    cams_names = args.data.vision.cameras
 
     for epoch in range(n_epochs):
         epoch_loss = []
@@ -174,7 +174,7 @@ def train(
 
 def main():
     from rs_imle_policy.configs.default_configs import (
-        PickPlaceRelativeRSMLEConfig as Config,
+        PickPlaceRSMLERelativeConfig as Config,
     )
 
     args = tyro.cli(Config)
@@ -188,10 +188,10 @@ def main():
         args.model.pred_horizon,
         args.model.obs_horizon,
         args.model.action_horizon,
-        low_dim_obs_keys=args.model.lowdim_obs_keys,
-        action_keys=args.model.action_keys,
+        low_dim_obs_keys=args.data.lowdim_obs_keys,
+        action_keys=args.data.action_keys,
+        vision_config=args.data.vision,
     )
-    # dataset = FilteredDatasetWrapper(dataset, 0.1)
     if args.debug:
         dataloader = torch.utils.data.DataLoader(
             dataset,
