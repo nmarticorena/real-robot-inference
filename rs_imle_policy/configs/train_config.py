@@ -52,6 +52,7 @@ class WristCamera(CameraConfig):
     gain: int = 60
 
 
+@dataclass
 class TopCamera(CameraConfig):
     name: str = "top"
     serial_number: str = "035122250388"
@@ -108,8 +109,8 @@ class RSIMLE(BaseModel):
 
 @dataclass
 class Diffusion(BaseModel):
-    name = "diffusion"
-    num_diffusion_iters = 100
+    name: str = "diffusion"
+    num_diffusion_iters: int = 100
     "diffusion iterations"
     beta_schedule: str = "squaredcos_cap_v2"
     "beta schedule"
