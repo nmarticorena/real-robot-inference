@@ -154,8 +154,8 @@ class TrainConfig:
     debug: bool = False
 
     # Sub-configurations
-    training_params: OptimConfig = field(default_factory=OptimConfig)
     model: Diffusion | RSIMLE = field(default_factory=RSIMLE)
+    training_params: OptimConfig = field(default_factory=OptimConfig)
     data: DataConfig = field(default_factory=DataConfig)
 
 
