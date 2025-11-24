@@ -119,21 +119,21 @@ class Policy:
         print("Pretrained weights loaded.")
 
     def create_networks(self):
-        vision_encoder_side = get_resnet("resnet18")
-        vision_encoder_side = replace_bn_with_gn(vision_encoder_side)
-
-        vision_encoder_wrist = get_resnet("resnet18")
-        vision_encoder_wrist = replace_bn_with_gn(vision_encoder_wrist)
+        cameras = self.model_config.vision_config.cameras
+        vision_encoders = {
+            f"vision_encoder_{camera}": replace_bn_with_gn(get_resnet("resnet18"))
+            for camera in cameras
+        }
 
         if isinstance(self.config.model, Diffusion):
             noise_pred_net = DiffusionConditionalUnet1D(
                 input_dim=self.dataset.action_shape,
                 global_cond_dim=self.dataset.obs_shape * self.model_config.obs_horizon,
             )
+
             nets = nn.ModuleDict(
                 {
-                    "vision_encoder_side": vision_encoder_side,
-                    "vision_encoder_wrist": vision_encoder_wrist,
+                    **vision_encoders,
                     "noise_pred_net": noise_pred_net,
                 }
             )
@@ -144,8 +144,7 @@ class Policy:
             )
             nets = nn.ModuleDict(
                 {
-                    "vision_encoder_side": vision_encoder_side,
-                    "vision_encoder_wrist": vision_encoder_wrist,
+                    **vision_encoders,
                     "generator": generator,
                 }
             )

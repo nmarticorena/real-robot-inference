@@ -40,6 +40,14 @@ def rs_imle_loss(real_samples, fake_samples, epsilon=0.1):
     return loss
 
 
+def process_image(images, vision_encoder, device):
+    B, T, C, H, W = images.shape
+    images = images.flatten(end_dim=1).to(device)
+    image_features = vision_encoder(images)
+    image_features = image_features.reshape(B, T, -1)
+    return image_features
+
+
 def train(
     args: TrainConfig, nets, dataloader, noise_scheduler, optimizer, lr_scheduler, ema
 ):
@@ -57,6 +65,8 @@ def train(
     device = args.model.device
     obs_horizon = args.model.obs_horizon
 
+    cams_names = args.model.vision_config.cameras
+
     for epoch in range(n_epochs):
         epoch_loss = []
         start_time = time.time()
@@ -64,30 +74,20 @@ def train(
             dataloader, desc=f"Epoch {epoch + 1}/{n_epochs}", leave=False
         ) as tepoch:
             for batch in tepoch:
-                nimage_side = batch["frames_side"][:, :obs_horizon].to(device)
-                nimage_wrist = batch["frames_wrist"][:, :obs_horizon].to(device)
                 nagent = batch["state"][:, :obs_horizon].to(device)
-
                 naction = batch["action"].to(device)
                 B = naction.shape[0]
 
-                image_features_side = nets["vision_encoder_side"](
-                    nimage_side.flatten(end_dim=1)
-                )
-                image_features_side = image_features_side.reshape(
-                    *nimage_side.shape[:2], -1
-                )
+                images = [
+                    batch[f"frame_{cam}"][:, :obs_horizon].to(device)
+                    for cam in cams_names
+                ]
+                image_features = [
+                    process_image(img, nets[f"vision_encoder_{cam}"], device)
+                    for img, cam in zip(images, cams_names)
+                ]
 
-                image_features_wrist = nets["vision_encoder_wrist"](
-                    nimage_wrist.flatten(end_dim=1)
-                )
-                image_features_wrist = image_features_wrist.reshape(
-                    *nimage_wrist.shape[:2], -1
-                )
-
-                obs_features = torch.cat(
-                    [image_features_side, image_features_wrist, nagent], dim=-1
-                )
+                obs_features = torch.cat([*image_features, nagent], dim=-1)
                 obs_cond = obs_features.flatten(start_dim=1)
 
                 if isinstance(args.model, Diffusion):
@@ -174,7 +174,7 @@ def train(
 
 def main():
     from rs_imle_policy.configs.default_configs import (
-        PickPlaceDiffusionConfig as Config,
+        PickPlaceRelativeRSMLEConfig as Config,
     )
 
     args = tyro.cli(Config)
@@ -192,14 +192,27 @@ def main():
         action_keys=args.model.action_keys,
     )
     # dataset = FilteredDatasetWrapper(dataset, 0.1)
-    dataloader = torch.utils.data.DataLoader(
-        dataset,
-        batch_size=args.training_params.batch_size,
-        num_workers=args.training_params.num_workers,
-        shuffle=True,
-        pin_memory=True,
-        persistent_workers=True,
-    )
+    if args.debug:
+        dataloader = torch.utils.data.DataLoader(
+            dataset,
+            batch_size=args.training_params.batch_size,
+            num_workers=0,
+            shuffle=True,
+            pin_memory=True,
+            persistent_workers=False,
+        )
+        print("debug")
+
+    else:
+        dataloader = torch.utils.data.DataLoader(
+            dataset,
+            batch_size=args.training_params.batch_size,
+            num_workers=args.training_params.num_workers,
+            shuffle=True,
+            pin_memory=True,
+            persistent_workers=True,
+        )
+        print("no debug")
 
     policy = Policy(config=args)
     nets = policy.nets

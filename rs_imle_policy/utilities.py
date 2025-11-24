@@ -309,6 +309,37 @@ def rotation_6d_to_quat(rot: torch.Tensor) -> torch.Tensor:
     return matrix_to_quaternion(mat)
 
 
+def pos_rot_to_se3(pos: torch.Tensor, rot: torch.Tensor) -> sm.SE3:
+    """Convert position and 6D rotation to SE3 object.
+
+    Args:
+        pos: Position tensor of shape (..., 3).
+        rot: 6D rotation tensor of shape (..., 6).
+
+    Returns:
+        SE3 object representing the pose.
+    """
+    if not isinstance(pos, torch.Tensor):
+        pos = torch.tensor(pos)
+    if not isinstance(rot, torch.Tensor):
+        rot = torch.tensor(rot)
+
+    if len(pos.shape) == 1:
+        pose = np.eye(4)
+    else:
+        pose = np.repeat((np.eye(4)[None, :, :]), pos.shape[0], axis=0)
+
+    rot_m = rotation_6d_to_matrix(rot).cpu().numpy()
+    t = pos.cpu().numpy()
+
+    pose[..., :3, :3] = rot_m
+    pose[..., :3, 3] = t
+
+    se3 = sm.SE3(pose)
+
+    return se3
+
+
 def get_delta() -> sm.SE3:
     import panda_py
     import frankx

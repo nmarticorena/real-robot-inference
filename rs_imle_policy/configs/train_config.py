@@ -131,6 +131,8 @@ class TrainConfig:
     "Model used, either RS_IMLE or Diffusion"
     task_name: str = "default"
     "Name of the task to train on"
+    debug: bool = False
+    "Set workers and persistance off is debug is on"
 
 
 @dataclass

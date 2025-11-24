@@ -97,11 +97,7 @@ class PolicyDataset(Dataset):
         # Normalize the data
         self.normalize_rlds()
 
-        # if mode == 'train':
         self.cached_dataset = h5py.File(f"{self.dataset_path}/images.h5", "r")
-
-        # if mode == 'test':
-        # self.cached_dataset = h5py.File('../../data/t_block_1/t_block_1.h5', 'r')
 
         if self.transform is None:
             self.transform = transforms.Compose(
@@ -112,11 +108,14 @@ class PolicyDataset(Dataset):
                 ]
             )
 
-        self.low_dim_obs_shape = self.rlds[0]["state"].shape[1]
-        self.img_shape = vision_config.vision_features_dim * len(vision_config.cameras)
-        self.obs_shape = self.low_dim_obs_shape + self.img_shape
+        if not visualize:
+            self.low_dim_obs_shape = self.rlds[0]["state"].shape[1]
+            self.img_shape = vision_config.vision_features_dim * len(
+                vision_config.cameras
+            )
+            self.obs_shape = self.low_dim_obs_shape + self.img_shape
 
-        self.action_shape = self.rlds[0]["action"].shape[1]
+            self.action_shape = self.rlds[0]["action"].shape[1]
 
     def create_rlds_dataset(self):
         rlds = {}
@@ -138,6 +137,14 @@ class PolicyDataset(Dataset):
 
             X_BE_follower = df["X_BE"].tolist()
             X_BE_leader = [(self.robot.fkine(np.array(q))).A for q in df["gello_q"]]
+
+            X_BE_follower_sm = [sm.SE3(X) for X in X_BE_follower]
+            X_BE_leader_sm = [sm.SE3(X) for X in X_BE_leader]
+
+            relative_transform = [
+                follower.inv() * leader
+                for follower, leader in zip(X_BE_follower_sm, X_BE_leader_sm)
+            ]
             gripper_width = df["gripper_state"].tolist()
             gripper_width = np.array(gripper_width).reshape(-1, 1)
             gripper_action = df["gripper_action"].tolist()
@@ -149,6 +156,9 @@ class PolicyDataset(Dataset):
             X_BE_leader_pos, X_BE_leader_orien = utils.extract_robot_pos_orien(
                 X_BE_leader
             )
+            relative_pos, relative_orien = utils.extract_robot_pos_orien(
+                relative_transform
+            )
 
             rlds[episode_index] = {
                 "robot_pos": X_BE_follower_pos,
@@ -156,6 +166,8 @@ class PolicyDataset(Dataset):
                 "gripper_state": gripper_width,
                 "action_orien": X_BE_leader_orien,
                 "action_pos": X_BE_leader_pos,
+                "relative_pos": relative_pos,
+                "relative_orien": relative_orien,
                 "action_gripper": gripper_action,
                 "X_BE": X_BE_follower,
                 "gello_q": df["gello_q"].tolist(),
@@ -180,35 +192,13 @@ class PolicyDataset(Dataset):
                 self.rlds[episode][key] = normalize_data(
                     np.array(self.rlds[episode][key]), self.stats[key]
                 )
-            # self.rlds[episode]["robot_pos"] = normalize_data(
-            #     np.array(self.rlds[episode]["robot_pos"]), self.stats["robot_pos"]
-            # )
-            # self.rlds[episode]["robot_orien"] = normalize_data(
-            #     np.array(self.rlds[episode]["robot_orien"]), self.stats["robot_orien"]
-            # )
-            # self.rlds[episode]["gripper_state"] = normalize_data(
-            #     np.array(self.rlds[episode]["gripper_state"]),
-            #     self.stats["gripper_state"],
-            # )
-            #
-            # self.rlds[episode]["action_pos"] = normalize_data(
-            #     np.array(self.rlds[episode]["action_pos"]), self.stats["action_pos"]
-            # )
-            # self.rlds[episode]["action_orien"] = normalize_data(
-            #     np.array(self.rlds[episode]["action_orien"]), self.stats["action_orien"]
-            # )
-            # self.rlds[episode]["action_gripper"] = normalize_data(
-            #     np.array(self.rlds[episode]["action_gripper"]),
-            #     self.stats["action_gripper"],
-            # )
         return
 
     def create_sample_indices(self, rlds_dataset, sequence_length=16):
         indices = []
         for episode in rlds_dataset.keys():
-            if int(episode) > 34:
-                break
-            episode_length = len(rlds_dataset[episode]["robot_pos"])
+            key = next(iter(rlds_dataset[episode]))
+            episode_length = len(rlds_dataset[episode][key])
             range_idx = episode_length - (sequence_length + 2)
             for idx in range(range_idx):
                 buffer_start_idx = idx
@@ -230,27 +220,10 @@ class PolicyDataset(Dataset):
             get_data(keys)
 
     def sample_sequence(self, episode, buffer_start_idx, buffer_end_idx):
-        agent_pos = self.rlds[episode]["robot_pos"][buffer_start_idx:buffer_end_idx]
-        agent_orien = self.rlds[episode]["robot_orien"][buffer_start_idx:buffer_end_idx]
-        agent_gripper = self.rlds[episode]["gripper_state"][
-            buffer_start_idx:buffer_end_idx
-        ]
-
-        action_pos = self.rlds[episode]["robot_pos"][
-            buffer_start_idx + 1 : buffer_end_idx + 1
-        ]
-        action_orien = self.rlds[episode]["robot_orien"][
-            buffer_start_idx + 1 : buffer_end_idx + 1
-        ]
-        action_gripper = self.rlds[episode]["action_gripper"][
-            buffer_start_idx + 1 : buffer_end_idx + 1
-        ]
         frames = self.read_video_frames(episode, buffer_start_idx, buffer_end_idx)
 
-        robot_state = np.concatenate([agent_pos, agent_orien, agent_gripper], axis=-1)
-        robot_action = np.concatenate(
-            [action_pos, action_orien, action_gripper], axis=-1
-        )
+        robot_state = self.rlds[episode]["state"][buffer_start_idx:buffer_end_idx]
+        robot_action = self.rlds[episode]["action"][buffer_start_idx:buffer_end_idx]
 
         seq = {"state": robot_state, "action": robot_action, "frames": frames}
         return seq
@@ -258,8 +231,7 @@ class PolicyDataset(Dataset):
     def read_video_frames(self, episode, start_frame, end_frame):
         frames = {}
         video = self.cached_dataset[str(episode)]
-        # only need 2 frames
-        for key in video.keys():
+        for key in self.vision_config.cameras:
             frame = video[key][start_frame : start_frame + self.obs_horizon]
             frames[key] = np.array([self.transform(f) for f in frame])
 
@@ -290,15 +262,11 @@ class PolicyDataset(Dataset):
         episode, buffer_start_idx, buffer_end_idx = self.indices[idx]
         seq = self.sample_sequence(episode, buffer_start_idx, buffer_end_idx)
 
-        frames = seq["frames"]
+        frames = {f"frame_{key}": seq["frames"][key] for key in seq["frames"].keys()}
 
         # Convert to tensors
         state = torch.tensor(seq["state"], dtype=torch.float32)
         action = torch.tensor(seq["action"], dtype=torch.float32)
-        frames_wrist = frames["wrist"]
-        frames_side = frames["side"]
-
-        # self.visualize_images_in_row(frames_wrist)
 
         # discard unused observations
         state = state[: self.obs_horizon]
@@ -306,8 +274,7 @@ class PolicyDataset(Dataset):
         return {
             "state": state,
             "action": action,
-            "frames_wrist": frames_wrist,
-            "frames_side": frames_side,
+            **frames,
         }
 
 
