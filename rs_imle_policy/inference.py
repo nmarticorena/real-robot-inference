@@ -1,3 +1,5 @@
+from collections import defaultdict
+
 import spatialmath as sm
 import spatialmath.base as smb
 import numpy as np
@@ -8,8 +10,14 @@ import os
 
 # env import
 import time
-import roboticstoolbox as rtb
+# import roboticstoolbox as rtb
 
+from rs_imle_policy.configs.train_config import (
+    ExperimentConfig,
+    VisionConfig,
+    Diffusion,
+    RSIMLE,
+)
 from rs_imle_policy.policy import Policy
 from rs_imle_policy.dataset import normalize_data, unnormalize_data
 import rs_imle_policy.utilities as utils
@@ -27,23 +35,27 @@ from frankx import (
     Gripper,
 )
 
+
 from rs_imle_policy.realsense.multi_realsense import MultiRealsense
 
 
 class PerceptionSystem:
-    def __init__(self):
+    def __init__(self, vision_config: VisionConfig):
+        serial_numbers = [cam.serial_number for cam in vision_config.cameras_params]
         self.cams = MultiRealsense(
-            serial_numbers=["123622270136", "035122250692"],
-            resolution=(640, 480),
-            record_fps=10,
-            depth_resolution=(640, 480),
-            enable_depth=False,
+            serial_numbers=serial_numbers,
+            resolution=vision_config.cameras_params[0].resolution,
+            record_fps=vision_config.cameras_params[0].frame_rate,
+            depth_resolution=vision_config.cameras_params[0].depth_resolution,
+            enable_depth=vision_config.cameras_params[0].depth_enabled,
         )
+        self.cams_config = vision_config
 
     def start(self):
-        self.cams.cameras["123622270136"].set_exposure(exposure=5000, gain=60)
-        self.cams.cameras["035122250692"].set_exposure(exposure=100, gain=60)
-
+        for cam_params in self.cams_config.cameras_params:
+            self.cams.cameras[cam_params.serial_number].set_exposure(
+                exposure=cam_params.exposure, gain=cam_params.gain
+            )
         self.cams.start()
 
     def stop(self):
@@ -51,22 +63,20 @@ class PerceptionSystem:
 
 
 class RobotInferenceController:
-    def __init__(self, eval_name, idx):
+    def __init__(self, config: ExperimentConfig, eval_name: str, idx: int):
         self.seed(42)
+        self.config = config
+        self.config.training = False
         self.robot = self.create_robot()
-        rtb_panda = rtb.models.Panda()
-        self.delta = rtb_panda.fkine(
-            rtb_panda.qr, start="panda_link8", end="panda_hand"
-        )
+        # rtb_panda = rtb.models.Panda()
         self.gripper = Gripper("172.16.0.2", speed=0.1)
-        self.perception_system = PerceptionSystem()
+        self.perception_system = PerceptionSystem(config.data.vision)
         self.perception_system.start()
         self.setup_diffusion_policy()
         self.move_to_start()
 
         self.eval_name = eval_name
-        self.all_frames = []
-        self.all_frames_wrist = []
+        self.all_frames = defaultdict(list)
         self.done = False
         self.idx = str(idx)
 
@@ -82,12 +92,8 @@ class RobotInferenceController:
     def move_to_start(self):
         self.open_gripper_if_closed()
         self.robot.move(JointMotion(np.deg2rad([-90, 0, 0, -90, 0, 90, 45])))
-        # self.robot.move(JointMotion([-1.829, 0.008, 0.172, -1.594, 0.001, 1.559, 0.718]))
-        # self.robot.move(JointMotion([-1.9953644495495173, -0.07019201069593659, 0.051291523464672376, -2.4943418327817803, -0.042134962130810624, 2.385776886145273, 0.35092161391247345]))
-        # self.robot.move(JointMotion([-1.4257584505685634, -0.302815655026201, 0.05126683842989545, -2.7415479229025443, 0.011030055865001531, 2.3881221201502796, 0.8777110836404692]))
 
     def create_robot(self, ip: str = "172.16.0.2", dynamic_rel: float = 0.4):  # 0.4
-        # panda = Robot(ip)
         panda = Robot(ip, repeat_on_error=True, dynamic_rel=dynamic_rel)
         panda.recover_from_errors()
         panda.accel_rel = 0.1
@@ -96,48 +102,49 @@ class RobotInferenceController:
 
     def setup_diffusion_policy(self):
         torch.cuda.empty_cache()
-        self.policy = Policy(
-            config_file="pick_place_config", saved_run_name=None, mode="infer"
-        )
+        self.policy = Policy(self.config)
 
-        self.obs_horizon = self.policy.params.obs_horizon
-        self.obs_deque = collections.deque(maxlen=self.policy.params.obs_horizon)
+        self.obs_horizon = self.config.model.obs_horizon
+        self.obs_deque = collections.deque(maxlen=self.config.model.obs_horizon)
 
     def process_inference_vision(self, obs_deque):
-        image_side = np.stack([x["image_side"] for x in obs_deque])
-        image_wrist = np.stack([x["image_wrist"] for x in obs_deque])
+        images = []
+        for cam_name in self.config.data.vision.cameras:
+            image = np.stack([x[cam_name] for x in obs_deque])
+            input_image = torch.stack([self.policy.transform(img) for img in image])
+            images.append(
+                input_image.to(self.policy.device, dtype=self.policy.precision)
+            )
+
         agent_pos = np.stack([x["state"] for x in obs_deque])
-
         nagent_pos = normalize_data(agent_pos, stats=self.policy.stats["state"])
-
-        nimage_side = torch.stack([self.policy.transform(img) for img in image_side])
-        nimage_wrist = torch.stack([self.policy.transform(img) for img in image_wrist])
-
         nagent_pos = torch.from_numpy(nagent_pos).to(
             self.policy.device, dtype=self.policy.precision
         )
-        nimage_side = nimage_side.to(self.policy.device, dtype=self.policy.precision)
-        nimage_wrist = nimage_wrist.to(self.policy.device, dtype=self.policy.precision)
 
-        if self.policy.params.method == "diffusion":
-            image_features_side = self.policy.ema_nets["vision_encoder_side"](
-                nimage_side
-            )
-            image_features_wrist = self.policy.ema_nets["vision_encoder_wrist"](
-                nimage_wrist
-            )
-        elif self.policy.params.method == "rs_imle":
-            image_features_side = self.policy.nets["vision_encoder_side"](nimage_side)
-            image_features_wrist = self.policy.nets["vision_encoder_wrist"](
-                nimage_wrist
-            )
+        breakpoint()
+        if isinstance(self.config.model, Diffusion):
+            pass
+        elif isinstance(self.config.model, RSIMLE):
+            pass
+        #     image_features_side = self.policy.ema_nets["vision_encoder_side"](
+        #         nimage_side
+        #     )
+        #     image_features_wrist = self.policy.ema_nets["vision_encoder_wrist"](
+        #         nimage_wrist
+        #     )
+        # elif isinstance(self.config.model, RSIMLE):
+        #     image_features_side = self.policy.nets["vision_encoder_side"](nimage_side)
+        #     image_features_wrist = self.policy.nets["vision_encoder_wrist"](
+        #         nimage_wrist
+        #     )
+        #
+        # obs_features = torch.cat(
+        #     [image_features_side, image_features_wrist, nagent_pos], dim=-1
+        # )
+        # obs_cond = obs_features.unsqueeze(0).flatten(start_dim=1)
 
-        obs_features = torch.cat(
-            [image_features_side, image_features_wrist, nagent_pos], dim=-1
-        )
-        obs_cond = obs_features.unsqueeze(0).flatten(start_dim=1)
-
-        return obs_cond
+        return None
 
     def get_observation(self):
         s = self.robot.get_state(read_once=False)
@@ -151,43 +158,35 @@ class RobotInferenceController:
         state = np.concat([t, rot, (width,)])
 
         images = self.perception_system.cams.get()
-        images_wrist = images[0]["color"]
-        images_side = images[1]["color"]
-        # images_top = images[2]['color']
 
-        # save images_top
-        # plt.imsave("images_top.png", images_top)
+        cam_names = self.config.data.vision.cameras
 
-        self.all_frames.append(images_side)
-        self.all_frames_wrist.append(images_wrist)
+        frames = {}
+        for ix, cam_name in enumerate(cam_names):
+            frames[f"{cam_name}"] = images[ix]["color"]
+            self.all_frames[f"{cam_name}"].append(images[ix]["color"])
 
         cv2.imshow("image", np.zeros((300, 300)))
         if cv2.waitKey(1) & 0xFF == ord("q"):
-            # write all frames to video
-            save_path = f"saved_evaluation_media/{self.eval_name}/{self.idx}_side.mp4"
-            out = cv2.VideoWriter(
-                save_path, cv2.VideoWriter_fourcc(*"mp4v"), 10, (640, 480)
-            )
-            for frame in self.all_frames:
-                rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)  # Convert BGR to RGB
-                out.write(rgb_frame)
-            out.release()
-            save_path_wrist = (
-                f"saved_evaluation_media/{self.eval_name}/{self.idx}_wrist.mp4"
-            )
-            out = cv2.VideoWriter(
-                save_path_wrist, cv2.VideoWriter_fourcc(*"mp4v"), 10, (640, 480)
-            )
-            for frame in self.all_frames_wrist:
-                rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)  # Convert BGR to RGB
-                out.write(rgb_frame)
-
+            for cam_name in cam_names:
+                save_path = (
+                    f"saved_evaluation_media/{self.eval_name}/{self.idx}_{cam_name}.mp4"
+                )
+                out = cv2.VideoWriter(
+                    save_path, cv2.VideoWriter_fourcc(*"mp4v"), 10, (640, 480)
+                )
+                for frame in self.all_frames[cam_name]:
+                    rgb_frame = cv2.cvtColor(
+                        frame, cv2.COLOR_BGR2RGB
+                    )  # Convert BGR to RGB
+                    out.write(rgb_frame)
+                out.release()
             cv2.destroyAllWindows()
             self.perception_system.stop()
             self.done = True
             print("Done")
 
-        return {"state": state, "image_wrist": images_wrist, "image_side": images_side}
+        return {"state": state, **frames}
 
     def infer_action(self, obs_deque):
         with torch.no_grad():
@@ -325,7 +324,7 @@ class RobotInferenceController:
             T_0p = sm.SE3(t[i])
             T_0p.R = sm.SO3(R[i].numpy(), check=False).norm()
 
-            T_0f = T_0p * self.delta
+            T_0f = T_0p  # * self.delta
 
             trans.append(T_0f.t)
             quads.append(smb.r2q(T_0f.A[:3, :3]))
@@ -334,6 +333,19 @@ class RobotInferenceController:
 
 
 if __name__ == "__main__":
-    controller = RobotInferenceController(eval_name="rs_imle_policy_10", idx=0)
+    from rs_imle_policy.configs.train_config import LoaderConfig
+
+    # from rs_imle_policy.configs.default_configs import (
+    #     PickPlaceRSMLERelativeConfig,
+    #     PickPlaceDiffusionRelativeConfig,
+    #     PickPlaceDiffusionConfig,
+    #     PickPlaceRSMLEConfig,
+    # )
+    import tyro
+
+    args = tyro.cli(LoaderConfig)
+    config = tyro.extras.from_yaml(ExperimentConfig, open(args.path / "config.yaml"))
+
+    controller = RobotInferenceController(config, eval_name="eval_1", idx=0)
     controller.start_inference()
     controller.perception_system.stop()

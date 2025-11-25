@@ -11,7 +11,7 @@ import time
 from policy import Policy
 import os
 
-from rs_imle_policy.configs.train_config import TrainConfig, Diffusion, RSIMLE
+from rs_imle_policy.configs.train_config import ExperimentConfig, Diffusion, RSIMLE
 
 
 def rs_imle_loss(real_samples, fake_samples, epsilon=0.1):
@@ -49,11 +49,19 @@ def process_image(images, vision_encoder, device):
 
 
 def train(
-    args: TrainConfig, nets, dataloader, noise_scheduler, optimizer, lr_scheduler, ema
+    args: ExperimentConfig,
+    nets,
+    dataloader,
+    noise_scheduler,
+    optimizer,
+    lr_scheduler,
+    ema,
 ):
     nets.train()
 
-    folder = os.path.join("saved_weights", args.task_name, args.model.name + "_25p")
+    folder = os.path.join(
+        "saved_weights", args.task_name, args.model.name + "_" + args.exp_name
+    )
     os.makedirs(folder, exist_ok=True)
 
     config = tyro.extras.to_yaml(args)

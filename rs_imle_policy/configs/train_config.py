@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 import pathlib
-from typing import Literal
+from typing import Literal, Optional
 
 
 @dataclass
@@ -58,7 +58,9 @@ class VisionConfig:
     img_shape: tuple[int, int] = (240, 320)
 
     def __post_init__(self):
-        self.cameras_params = [default_cameras[cam] for cam in self.cameras]
+        self.cameras_params: list[CameraConfig] = [
+            default_cameras[cam] for cam in self.cameras
+        ]
 
 
 @dataclass
@@ -121,7 +123,6 @@ class BaseModel:
     pred_horizon: int = 16
     action_horizon: int = 8
     obs_horizon: int = 2
-    action_relative: bool = False
 
 
 @dataclass
@@ -145,39 +146,36 @@ class Diffusion(BaseModel):
 
 
 @dataclass
-class TrainConfig:
+class ExperimentConfig:
     """Main training configuration"""
 
     exp_name: str
     dataset_path: pathlib.Path
+    model: Diffusion | RSIMLE
     task_name: str = "default"
     debug: bool = False
+    training: bool = True
 
     # Sub-configurations
-    model: Diffusion | RSIMLE = field(default_factory=RSIMLE)
     training_params: OptimConfig = field(default_factory=OptimConfig)
     data: DataConfig = field(default_factory=DataConfig)
 
-
-@dataclass
-class InferenceConfig:
-    """Infernece configuration"""
-
-    model: Diffusion | RSIMLE = field(default_factory=RSIMLE)
-    data: DataConfig = field(default_factory=DataConfig)
+    epoch: Optional[int] = None  # For loading checkpoints
+    action_shape: int = 0  # Solved during training
+    obs_shape: int = 0  # Solved during training
 
 
 @dataclass
 class LoaderConfig:
     """Configuration for data loading"""
 
-    dataset_path: pathlib.Path
+    path: pathlib.Path
 
 
 if __name__ == "__main__":
     import tyro
 
-    args = tyro.cli(TrainConfig)
+    args = tyro.cli(ExperimentConfig)
     config = tyro.extras.to_yaml(args)
     with open("example.yml", "w") as outfile:
         outfile.write(config)

@@ -15,16 +15,14 @@ import copy
 import numpy as np
 import torchvision.transforms as transforms
 from rs_imle_policy.configs.train_config import (
-    TrainConfig,
-    InferenceConfig,
+    ExperimentConfig,
     Diffusion,
     RSIMLE,
 )
-from typing import Union
 
 
 class Policy:
-    def __init__(self, config: Union[InferenceConfig, TrainConfig]):
+    def __init__(self, config: ExperimentConfig):
         self.config = config
         self.model_config = config.model
 
@@ -40,7 +38,7 @@ class Policy:
 
         self.precision = torch.float32
         self.device = self.model_config.device
-        if isinstance(self.config, TrainConfig):
+        if self.config.training:
             self.dataset = PolicyDataset(
                 self.config.dataset_path,
                 self.model_config.pred_horizon,
@@ -58,6 +56,8 @@ class Policy:
                 pin_memory=True,
                 persistent_workers=True,
             )
+            self.config.action_shape = self.dataset.action_shape
+            self.config.obs_shape = self.dataset.obs_shape
             self.nets = self.create_networks()
             self.ema = EMAModel(parameters=self.nets.parameters(), power=0.75)
 
@@ -75,14 +75,19 @@ class Policy:
             )
 
             print("Training Mode.")
-
-        elif isinstance(self.config, InferenceConfig):
-            # self.load_weights(saved_run_name) TODO: Fix
-
-            # stats_path = os.path.join("/mnt/droplet/", 'stats.pkl')
-            stats_path = os.path.join("saved_weights/default/rs_imle_25p/", "stats.pkl")
+        else:
+            self.folder = os.path.join(
+                "saved_weights",
+                self.config.task_name,
+                self.model_config.name + "_" + self.config.exp_name,
+            )
+            stats_path = os.path.join(self.folder, "stats.pkl")
             self.stats = np.load(stats_path, allow_pickle=True)
 
+            self.nets = self.create_networks()
+            self.ema = EMAModel(parameters=self.nets.parameters(), power=0.75)
+
+            self.load_weights()
             self.transform = transforms.Compose(
                 [
                     transforms.ToPILImage(),
@@ -94,15 +99,16 @@ class Policy:
 
             print("Inference Mode.")
 
-    def load_weights(self, saved_run_name, load_best=True):
-        print(saved_run_name)
-        if isinstance(self.config, Diffusion):
+    def load_weights(self):
+        if self.config.epoch is None:
+            epoch_str = "last"
+        else:
+            epoch_str = self.config.epoch
+        if isinstance(self.config.model, Diffusion):
             print("Loading pretrained weights for diffusion")
             self.ema_nets = copy.deepcopy(self.nets)
 
-            fpath_ema = os.path.join(
-                "saved_weights/diffusion_policy_10/", "ema_net_epoch_.pth"
-            )
+            fpath_ema = os.path.join(self.folder, f"ema_net_epoch_{epoch_str}.pth")
             state_dict_ema = torch.load(fpath_ema, map_location="cuda")
             self.ema_nets.load_state_dict(state_dict_ema)
 
@@ -114,7 +120,7 @@ class Policy:
 
         elif isinstance(self.config, RSIMLE):
             print("Loading pretrained weights for rs_imle")
-            fpath = os.path.join("saved_weights//rs_imle_25p/", "net_epoch_last.pth")
+            fpath = os.path.join(self.folder, f"net_epoch_{epoch_str}.pth")
             self.nets.load_state_dict(torch.load(fpath, map_location="cuda"))
 
         print("Pretrained weights loaded.")
@@ -128,8 +134,8 @@ class Policy:
 
         if isinstance(self.config.model, Diffusion):
             noise_pred_net = DiffusionConditionalUnet1D(
-                input_dim=self.dataset.action_shape,
-                global_cond_dim=self.dataset.obs_shape * self.model_config.obs_horizon,
+                input_dim=self.config.action_shape,
+                global_cond_dim=self.config.obs_shape * self.model_config.obs_horizon,
             )
 
             nets = nn.ModuleDict(

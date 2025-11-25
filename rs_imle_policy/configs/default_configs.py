@@ -1,5 +1,5 @@
 from rs_imle_policy.configs.train_config import (
-    TrainConfig,
+    ExperimentConfig,
     RSIMLE,
     Diffusion,
     DataConfig,
@@ -25,7 +25,7 @@ class RelativeActionsConfig(DataConfig):
 
 # RS-IMLE Configurations
 @dataclass
-class PickPlaceRSMLEConfig(TrainConfig):
+class PickPlaceRSMLEConfig(ExperimentConfig):
     """Pick and place task with RS-IMLE using absolute actions"""
 
     model: RSIMLE | Diffusion = field(default_factory=lambda: RSIMLE())
@@ -33,7 +33,7 @@ class PickPlaceRSMLEConfig(TrainConfig):
 
 
 @dataclass
-class PickPlaceRSMLERelativeConfig(TrainConfig):
+class PickPlaceRSMLERelativeConfig(ExperimentConfig):
     """Pick and place task with RS-IMLE using relative actions"""
 
     model: RSIMLE | Diffusion = field(default_factory=lambda: RSIMLE())
@@ -42,7 +42,7 @@ class PickPlaceRSMLERelativeConfig(TrainConfig):
 
 # Diffusion Configurations
 @dataclass
-class PickPlaceDiffusionConfig(TrainConfig):
+class PickPlaceDiffusionConfig(ExperimentConfig):
     """Pick and place task with Diffusion using absolute actions"""
 
     model: RSIMLE | Diffusion = field(default_factory=lambda: Diffusion())
@@ -50,7 +50,7 @@ class PickPlaceDiffusionConfig(TrainConfig):
 
 
 @dataclass
-class PickPlaceDiffusionRelativeConfig(TrainConfig):
+class PickPlaceDiffusionRelativeConfig(ExperimentConfig):
     """Pick and place task with Diffusion using relative actions"""
 
     model: RSIMLE | Diffusion = field(default_factory=lambda: Diffusion())
