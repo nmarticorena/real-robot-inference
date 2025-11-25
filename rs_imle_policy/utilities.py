@@ -335,7 +335,10 @@ def pos_rot_to_se3(pos: torch.Tensor, rot: torch.Tensor) -> sm.SE3:
     pose[..., :3, :3] = rot_m
     pose[..., :3, 3] = t
 
-    se3 = sm.SE3(pose)
+    if len(pos.shape) > 1:
+        se3 = [sm.SE3(p) for p in pose]
+    else:
+        se3 = sm.SE3(pose)
 
     return se3
 

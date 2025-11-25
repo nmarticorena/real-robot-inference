@@ -6,25 +6,24 @@ import numpy as np
 
 
 class RobotViz:
-    def __init__(self):
+    def __init__(self, action_horizon = 1, teleop = True):
         self.env = swift.Swift()
         self.env.launch()
         self.robot = rtb.models.Panda()
-        self.gello = rtb.models.Panda()
-        self.env.add(self.robot, robot_alpha=0.5)
-        self.env.add(self.gello, robot_alpha=0.5)
-        self.object_pose = sg.Axes(0.1, pose=sm.SE3(1, 1, 1))
-        self.policy_pose = sg.Axes(0.3, pose=sm.SE3(1, 1, 1))
-        # self.policy_pose = sg.Arrow(0.3,0.005, pose = sm.SE3(1,1,1), color = np.random.rand(3))
-        self.ee_pose = sg.Axes(0.1, pose=sm.SE3(1, 1, 1))
-        self.orientation_frame = sg.Axes(0.3, pose=sm.SE3(1, 1, 1))
-        self.cup_handle = sg.Axes(0.1, pose=sm.SE3(1, 1, 1))
+        self.env.add(self.robot, robot_alpha=1.0)
+        if teleop:
+            self.gello = rtb.models.Panda()
+            self.env.add(self.gello, robot_alpha=0.5)
+        
 
-        self.env.add(self.object_pose)
+        self.ee_pose = sg.Axes(0.1, pose=sm.SE3(1, 1, 1))
         self.env.add(self.ee_pose)
-        self.env.add(self.policy_pose)
-        self.env.add(self.orientation_frame)
-        self.env.add(self.cup_handle)
+
+        self.action_viz = []
+        for _ in range(action_horizon):
+            ap = sg.Axes(0.05, pose=sm.SE3(1, 1, 1))
+            self.action_viz.append(ap)
+            self.env.add(ap)
 
         self.robot.grippers[0].q = [0.03, 0.03]
 
@@ -38,10 +37,12 @@ class RobotViz:
             ]
         )
         self.X_FE = sm.SE3(X_FE, check=False).norm()
-        # import pdb; pdb.set_trace()
+    def update_actions(self, action_poses):
+        for ap, pose in zip(self.action_viz, action_poses):
+            ap.T = pose
 
     def step(self, q, gello_q=None):
-        self.robot.q = q
+        # self.robot.q = q
         if gello_q is not None:
             self.gello.q = gello_q
         self.env.step()

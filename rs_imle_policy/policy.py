@@ -24,26 +24,25 @@ from rs_imle_policy.configs.train_config import (
 class Policy:
     def __init__(self, config: ExperimentConfig):
         self.config = config
-        self.model_config = config.model
 
-        if isinstance(self.model_config, Diffusion):
+        if isinstance(self.config.model, Diffusion):
             self.noise_scheduler = DDPMScheduler(
-                num_train_timesteps=self.model_config.num_diffusion_iters,
-                beta_schedule=self.model_config.beta_schedule,
-                clip_sample=self.model_config.clip_sample,
-                prediction_type=self.model_config.prediction_type,
+                num_train_timesteps=self.config.model.num_diffusion_iters,
+                beta_schedule=self.config.model.beta_schedule,
+                clip_sample=self.config.model.clip_sample,
+                prediction_type=self.config.model.prediction_type,
             )  # TODO: Check if I can do *kwargs here
         else:
             self.noise_scheduler = None
 
         self.precision = torch.float32
-        self.device = self.model_config.device
+        self.device = self.config.model.device
         if self.config.training:
             self.dataset = PolicyDataset(
                 self.config.dataset_path,
-                self.model_config.pred_horizon,
-                self.model_config.obs_horizon,
-                self.model_config.action_horizon,
+                self.config.model.pred_horizon,
+                self.config.model.obs_horizon,
+                self.config.model.action_horizon,
                 low_dim_obs_keys=self.config.data.lowdim_obs_keys,
                 action_keys=self.config.data.action_keys,
                 vision_config=self.config.data.vision,
@@ -79,7 +78,7 @@ class Policy:
             self.folder = os.path.join(
                 "saved_weights",
                 self.config.task_name,
-                self.model_config.name + "_" + self.config.exp_name,
+                self.config.model.name + "_" + self.config.exp_name,
             )
             stats_path = os.path.join(self.folder, "stats.pkl")
             self.stats = np.load(stats_path, allow_pickle=True)
@@ -103,7 +102,8 @@ class Policy:
         if self.config.epoch is None:
             epoch_str = "last"
         else:
-            epoch_str = self.config.epoch
+            epoch_str = f"{self.config.epoch:04d}"
+        print(f"Loading pretrained weights from epoch {epoch_str}...")
         if isinstance(self.config.model, Diffusion):
             print("Loading pretrained weights for diffusion")
             self.ema_nets = copy.deepcopy(self.nets)
@@ -118,7 +118,7 @@ class Policy:
 
             self.ema = EMAModel(parameters=self.ema_nets.parameters(), power=0.75)
 
-        elif isinstance(self.config, RSIMLE):
+        elif isinstance(self.config.model, RSIMLE):
             print("Loading pretrained weights for rs_imle")
             fpath = os.path.join(self.folder, f"net_epoch_{epoch_str}.pth")
             self.nets.load_state_dict(torch.load(fpath, map_location="cuda"))
@@ -135,7 +135,7 @@ class Policy:
         if isinstance(self.config.model, Diffusion):
             noise_pred_net = DiffusionConditionalUnet1D(
                 input_dim=self.config.action_shape,
-                global_cond_dim=self.config.obs_shape * self.model_config.obs_horizon,
+                global_cond_dim=self.config.obs_shape * self.config.model.obs_horizon,
             )
 
             nets = nn.ModuleDict(
@@ -146,8 +146,8 @@ class Policy:
             )
         elif isinstance(self.config.model, RSIMLE):
             generator = GeneratorConditionalUnet1D(
-                input_dim=self.dataset.action_shape,
-                global_cond_dim=self.dataset.obs_shape * self.model_config.obs_horizon,
+                input_dim=self.config.action_shape,
+                global_cond_dim=self.config.obs_shape * self.config.model.obs_horizon,
             )
             nets = nn.ModuleDict(
                 {
@@ -156,4 +156,4 @@ class Policy:
                 }
             )
 
-        return nets.to(self.model_config.device)
+        return nets.to(self.config.model.device)

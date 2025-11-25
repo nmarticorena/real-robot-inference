@@ -10,8 +10,10 @@ import os
 
 # env import
 import time
+from rs_imle_policy.visualizer.rtb import RobotViz
 # import roboticstoolbox as rtb
 
+from rs_imle_policy.configs.default_configs import ExperimentConfigChoice # noqa: F841
 from rs_imle_policy.configs.train_config import (
     ExperimentConfig,
     VisionConfig,
@@ -68,6 +70,7 @@ class RobotInferenceController:
         self.config = config
         self.config.training = False
         self.robot = self.create_robot()
+        self.gui = RobotViz(action_horizon = self.config.model.action_horizon)
         # rtb_panda = rtb.models.Panda()
         self.gripper = Gripper("172.16.0.2", speed=0.1)
         self.perception_system = PerceptionSystem(config.data.vision)
@@ -122,33 +125,29 @@ class RobotInferenceController:
             self.policy.device, dtype=self.policy.precision
         )
 
-        breakpoint()
+        image_features = []
         if isinstance(self.config.model, Diffusion):
-            pass
+            for ix, cam_name in enumerate(self.config.data.vision.cameras):
+                image_feature = self.policy.ema_nets[f"vision_encoder_{cam_name}"](
+                    images[ix]
+                )
+                image_features.append(image_feature)
         elif isinstance(self.config.model, RSIMLE):
-            pass
-        #     image_features_side = self.policy.ema_nets["vision_encoder_side"](
-        #         nimage_side
-        #     )
-        #     image_features_wrist = self.policy.ema_nets["vision_encoder_wrist"](
-        #         nimage_wrist
-        #     )
-        # elif isinstance(self.config.model, RSIMLE):
-        #     image_features_side = self.policy.nets["vision_encoder_side"](nimage_side)
-        #     image_features_wrist = self.policy.nets["vision_encoder_wrist"](
-        #         nimage_wrist
-        #     )
-        #
-        # obs_features = torch.cat(
-        #     [image_features_side, image_features_wrist, nagent_pos], dim=-1
-        # )
-        # obs_cond = obs_features.unsqueeze(0).flatten(start_dim=1)
+            for ix, cam_name in enumerate(self.config.data.vision.cameras):
+                image_feature = self.policy.nets[f"vision_encoder_{cam_name}"](
+                    images[ix]
+                )
+                image_features.append(image_feature)
+        obs_features = torch.cat(image_features + [nagent_pos], dim=-1)
+        
+        obs_cond = obs_features.unsqueeze(0).flatten(start_dim=1)
 
-        return None
+        return obs_cond
 
     def get_observation(self):
         s = self.robot.get_state(read_once=False)
 
+        self.gui.robot.q = s.q
         # s = self.robot.read_once()
         X_BE = np.array(s.O_T_EE).reshape(4, 4).T
         rot = utils.matrix_to_rotation_6d(X_BE[:3, :3])
@@ -192,20 +191,22 @@ class RobotInferenceController:
         with torch.no_grad():
             obs_cond = self.process_inference_vision(obs_deque)
 
-            if self.policy.params.method == "diffusion":
+            if isinstance(self.config.model, Diffusion):
+                print("Diffusion inference")
                 # initialize action from Guassian noise
                 noisy_action = torch.randn(
-                    (1, self.policy.params.pred_horizon, self.policy.params.action_dim),
+                    (1, self.config.model.pred_horizon, self.config.action_shape),
                     device=self.policy.device,
                     dtype=self.policy.precision,
                 )
                 naction = noisy_action
                 # init scheduler
                 self.policy.noise_scheduler.set_timesteps(
-                    self.policy.params.num_diffusion_iters
+                    self.config.model.num_diffusion_iters
                 )
-                # self.noise_scheduler.set_timesteps(20)
 
+                breakpoint()
+                actions = []
                 for k in self.policy.noise_scheduler.timesteps:
                     # predict noise
                     noise_pred = self.policy.ema_nets["noise_pred_net"](
@@ -216,15 +217,25 @@ class RobotInferenceController:
                     naction = self.policy.noise_scheduler.step(
                         model_output=noise_pred, timestep=k, sample=naction
                     ).prev_sample
+                    actions.append(naction.cpu().numpy())
 
-            elif self.policy.params.method == "rs_imle":
+                import matplotlib.pyplot as plt
+                for i in range(naction.shape[-1]):
+                    plt.plot([a[0, -1, i] for a in actions])
+                    plt.title(f"Action dimension {i}")
+                    plt.xlabel("Diffusion step")
+                    plt.ylabel("Action value")
+                    plt.show()
+            elif isinstance(self.config.model, RSIMLE):
                 noise = torch.randn(
-                    (1, self.policy.params.pred_horizon, self.policy.params.action_dim),
-                    device=self.policy.params.device,
+                    (1, self.config.model.pred_horizon, self.config.action_shape),
+                    device=self.config.model.device,
                 )
                 # clip noise
                 noise = torch.clamp(noise, -1, 1)
                 naction = self.policy.nets["generator"](noise, global_cond=obs_cond)
+            else:
+                raise NotImplementedError("Model not supported for inference.")
 
         naction = naction.detach().to("cpu").numpy()[0]
 
@@ -232,22 +243,19 @@ class RobotInferenceController:
         action_pos = unnormalize_data(naction, stats=self.policy.stats["action"])
 
         # only take action_horizon number of actions
-        start = self.policy.params.obs_horizon - 1
-        end = start + self.policy.params.action_horizon
+        start = self.config.model.obs_horizon - 1
+        end = start + self.config.model.action_horizon
         action = action_pos[start:end]
 
         return {"action": action}
 
     def close_gripper_if_open(self) -> bool:
-        # print(f"Trying to close gripper. Width: {self.gripper.width()}")
         if self.gripper.width() > 0.04:
-            # print("Passes")
             self.gripper.close()
             return True
         return False
 
     def open_gripper_if_closed(self) -> bool:
-        print(f"Trying to open gripper. Width: {self.gripper.width()}")
         if self.gripper.width() < 0.03:
             self.gripper.open()
             return True
@@ -278,18 +286,26 @@ class RobotInferenceController:
                 time.sleep(0.1)
                 print("Waiting for observation")
 
-            out = self.infer_action(self.obs_deque.copy())
+            obs = self.obs_deque.copy()
+            out = self.infer_action(obs)
             action = out["action"]
-            print(action.shape)
+
+            # Im not proud of this, but currently we only do
+            # either relative or absolute actions, Here we 
+            # need to add any fix
 
             print("elapsed time: ", time.time() - start_time)
+            low_level_obs = obs[-1]["state"]
+            low_level_pos = low_level_obs[:3]
+            low_level_orien = low_level_obs[3:9]
+            current_pose = utils.pos_rot_to_se3(low_level_pos, low_level_orien)
 
-            print(action[:, 3:-1].shape)
-
-            n_trans, n_quads = self.apply_delta(action)
+            n_trans, n_quads, poses = self.relative_to_absolute(action, sm.SE3(current_pose))
+            self.gui.update_actions(poses)
+            self.gui.step(np.zeros(7))
 
             waypoints = []
-            for i in range(4, len(action)):
+            for i in range(0, 1):
                 trans = n_trans[i]
                 q = n_quads[i]
                 waypoints.append(
@@ -299,7 +315,7 @@ class RobotInferenceController:
                 )
             self.motion.set_next_waypoints(waypoints)
             # self.motion.set_next_waypoint(Waypoint(Affine(trans[0], trans[1], trans[2], q[0], q[1], q[2], q[3])))
-            if action[4][-1] > 0.8:
+            if action[-4][-1] > 0.8:
                 print("clossing")
                 self.close_gripper_if_open()
                 # gripper.move_unsafe_async(0)
@@ -307,30 +323,27 @@ class RobotInferenceController:
                 print("openning")
                 self.open_gripper_if_closed()
                 # gripper.move_unsafe_async(50)
-            time.sleep(0.1)
+            time.sleep(1)
             # while self.motion.finish():
             # print("Waiting for motion to finish")
             # time.sleep(0.001)
 
-    def apply_delta(self, action: np.ndarray):
+    def relative_to_absolute(self, action: np.ndarray, current_pose:sm.SE3) -> tuple[list[np.ndarray], list[np.ndarray], list[sm.SE3]]:
         n = action.shape[0]
-        # Action is a trans + 6dof rotation
+        # Action
         t = action[:, :3]
-        R = utils.rotation_6d_to_matrix(torch.from_numpy(action[:, 3:-1]))
-
+        rot = action[:, 3:-1]
+       
+        rel_poses = utils.pos_rot_to_se3(torch.from_numpy(t), rot)
         trans = []
         quads = []
+        poses = [current_pose]
         for i in range(n):
-            T_0p = sm.SE3(t[i])
-            T_0p.R = sm.SO3(R[i].numpy(), check=False).norm()
+            poses.append(poses[-1] * rel_poses[i])
 
-            T_0f = T_0p  # * self.delta
-
-            trans.append(T_0f.t)
-            quads.append(smb.r2q(T_0f.A[:3, :3]))
-
-        return trans, quads
-
+            trans.append(poses[-1].t)
+            quads.append(smb.r2q(poses[-1].A[:3, :3]))
+        return trans, quads, poses
 
 if __name__ == "__main__":
     from rs_imle_policy.configs.train_config import LoaderConfig
@@ -345,6 +358,7 @@ if __name__ == "__main__":
 
     args = tyro.cli(LoaderConfig)
     config = tyro.extras.from_yaml(ExperimentConfig, open(args.path / "config.yaml"))
+    config.epoch = args.epoch
 
     controller = RobotInferenceController(config, eval_name="eval_1", idx=0)
     controller.start_inference()

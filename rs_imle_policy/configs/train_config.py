@@ -42,6 +42,8 @@ class SideCamera(CameraConfig):
     gain: int = 60
 
 
+
+    
 default_cameras = {
     "wrist": WristCamera(),
     "top": TopCamera(),
@@ -170,6 +172,7 @@ class LoaderConfig:
     """Configuration for data loading"""
 
     path: pathlib.Path
+    epoch: Optional[int] = None
 
 
 if __name__ == "__main__":

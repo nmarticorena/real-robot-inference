@@ -55,3 +55,10 @@ class PickPlaceDiffusionRelativeConfig(ExperimentConfig):
 
     model: RSIMLE | Diffusion = field(default_factory=lambda: Diffusion())
     data: DataConfig = field(default_factory=RelativeActionsConfig)
+
+ExperimentConfigChoice = (
+    PickPlaceRSMLEConfig
+    | PickPlaceRSMLERelativeConfig
+    | PickPlaceDiffusionConfig
+    | PickPlaceDiffusionRelativeConfig
+)
