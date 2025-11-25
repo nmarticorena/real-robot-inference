@@ -348,12 +348,6 @@ class RobotInferenceController:
 if __name__ == "__main__":
     from rs_imle_policy.configs.train_config import LoaderConfig
 
-    # from rs_imle_policy.configs.default_configs import (
-    #     PickPlaceRSMLERelativeConfig,
-    #     PickPlaceDiffusionRelativeConfig,
-    #     PickPlaceDiffusionConfig,
-    #     PickPlaceRSMLEConfig,
-    # )
     import tyro
 
     args = tyro.cli(LoaderConfig)
