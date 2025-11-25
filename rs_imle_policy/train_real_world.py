@@ -67,6 +67,7 @@ def train(
     config = tyro.extras.to_yaml(args)
     with open(os.path.join(folder, "config.yaml"), "w") as f:
         f.write(config)
+    shutil.copyfile(args.dataset_path / "stats.pkl", os.path.join(folder, "stats.pkl"))
 
     # make dir if not exist
     n_epochs = args.training_params.num_epochs
