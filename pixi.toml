@@ -13,8 +13,7 @@ args = [
 cmd = "rsync -avz --update --rsync-path='/home/nmarticorena/.pixi/bin/rsync' {{ exp_name }}/{{ pattern }}   nmarticorena@rllab.qut.edu.au:/home/nmarticorena/real-robot-inference/{{ exp_name }}/"
 
 [tasks.sync_datasets]
-cmd = "rsync -avz --update nmarticorena@rllab.qut.edu.au:/home/nmarticorena/panda_dc/data/ /media/storage/nmarticorena/datasets/"
-
+cmd = "rsync -avz --ignore-existing nmarticorena@rllab.qut.edu.au:/home/nmarticorena/panda_dc/data/ data/"
 [tasks.copy_all]
 cmd = "echo Copy all weights"
 args = [
