@@ -48,9 +48,6 @@ class SideCamera2(CameraConfig):
     exposure: int = 100
     gain: int = 60
 
-
-
-
     
 default_cameras = {
     "wrist": WristCamera(),
