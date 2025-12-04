@@ -91,6 +91,10 @@ roboticstoolbox-python = {git = "https://github.com/nmarticorena/robotics-toolbo
 swift-sim = {git = "https://github.com/nmarticorena/swift.git"}
 spatialgeometry = {git = "https://github.com/nmarticorena/spatialgeometry.git"}
 spatialmath-python = {git = "https://github.com/nmarticorena/spatialmath-python.git"}
-frankx = {git = "https://github.com/nmarticorena/frankx.git"}
+frankx = {path = "../old_frankx", editable = true}
 atomics = ">=1.0.3, <2"
 panda-python = ">=0.8.1, <0.9"
+franky-control = {git = "https://github.com/TimSchneider42/franky.git"}
+
+[activation.env]
+PANDA_IP = "172.16.0.2"
