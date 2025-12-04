@@ -75,6 +75,7 @@ class RobotInferenceController:
         self.gripper = Gripper("172.16.0.2", speed=0.1)
         self.perception_system = PerceptionSystem(config.data.vision)
         self.perception_system.start()
+        self.gripper_open = False
         self.setup_diffusion_policy()
         self.move_to_start()
 
@@ -99,6 +100,10 @@ class RobotInferenceController:
     def create_robot(self, ip: str = "172.16.0.2", dynamic_rel: float = 0.4):  # 0.4
         panda = Robot(ip, repeat_on_error=True, dynamic_rel=dynamic_rel)
         panda.recover_from_errors()
+        impedance = [400.0, 400.0, 400.0, 40.0, 40.0, 40.0]
+
+        # impedance = np.diag(impedance)
+        panda.set_cartesian_impedance(impedance)
         panda.accel_rel = 0.1
         panda.jerk_rel = 0.01
         return panda
@@ -147,11 +152,14 @@ class RobotInferenceController:
     def get_observation(self):
         s = self.robot.get_state(read_once=False)
 
-        self.gui.robot.q = s.q
+        self.gui.step(s.q)
         # s = self.robot.read_once()
-        X_BE = np.array(s.O_T_EE).reshape(4, 4).T
+        X_BE = np.array(s.O_T_EE).reshape(4, 4, order="F")
+        # print(self.robot.current_pose())
+
+        # X_BE = self.gui.robot.fk(s.q).A
         rot = utils.matrix_to_rotation_6d(X_BE[:3, :3])
-        X_BE = X_BE  # @ self.delta
+        X_BE = X_BE
         t = X_BE[:3, 3]
         width = self.gripper.width()
         state = np.concat([t, rot, (width,)])
@@ -165,7 +173,12 @@ class RobotInferenceController:
             frames[f"{cam_name}"] = images[ix]["color"]
             self.all_frames[f"{cam_name}"].append(images[ix]["color"])
 
-        cv2.imshow("image", np.zeros((300, 300)))
+        # cv2.imshow("image", np.zeros((300, 300)))
+        for i in range(len(cam_names)):
+            cam_name = cam_names[i]
+            cv2.imshow(f"Current View {cam_name}", images[i]["color"])
+
+
         if cv2.waitKey(1) & 0xFF == ord("q"):
             for cam_name in cam_names:
                 save_path = (
@@ -188,6 +201,13 @@ class RobotInferenceController:
         return {"state": state, **frames}
 
     def infer_action(self, obs_deque):
+        low_dim_state = np.stack([x["state"] for x in obs_deque])
+        pos = low_dim_state[:, :3]
+        orien_6d = low_dim_state[:, 3:9]
+    
+        pose = utils.pos_rot_to_se3(torch.from_numpy(pos), torch.from_numpy(orien_6d))
+        self.gui.current_state.T = pose[-1]
+
         with torch.no_grad():
             obs_cond = self.process_inference_vision(obs_deque)
 
@@ -250,14 +270,16 @@ class RobotInferenceController:
         return {"action": action}
 
     def close_gripper_if_open(self) -> bool:
-        if self.gripper.width() > 0.04:
+        if self.gripper_open:
             self.gripper.close()
+            self.gripper_open = False
             return True
         return False
 
     def open_gripper_if_closed(self) -> bool:
-        if self.gripper.width() < 0.03:
+        if not self.gripper_open:
             self.gripper.open()
+            self.gripper_open = True
             return True
         return False
 
