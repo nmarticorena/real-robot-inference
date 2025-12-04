@@ -160,6 +160,8 @@ class PolicyDataset(Dataset):
                 relative_transform
             )
 
+            progress = self.linear_progress(len(df))
+
             rlds[episode_index] = {
                 "robot_pos": X_BE_follower_pos,
                 "robot_orien": X_BE_follower_orien,
@@ -172,6 +174,7 @@ class PolicyDataset(Dataset):
                 "X_BE": X_BE_follower,
                 "gello_q": df["gello_q"].tolist(),
                 "robot_q": df["robot_q"].tolist(),
+                "progress": progress,
             }
 
             if len(self.low_dim_obs_keys) != 0:
@@ -239,6 +242,9 @@ class PolicyDataset(Dataset):
 
     def __len__(self):
         return len(self.indices)
+
+    def linear_progress(self, length):
+        return np.linspace(0, 1, length)
 
     def visualize_images_in_row(self, tensor):
         # Ensure the input tensor is in the right shape

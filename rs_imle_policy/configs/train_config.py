@@ -41,6 +41,7 @@ class SideCamera(CameraConfig):
     exposure: int = 100
     gain: int = 60
 
+
 @dataclass
 class SideCamera2(CameraConfig):
     name: str = "side_2"
@@ -48,7 +49,7 @@ class SideCamera2(CameraConfig):
     exposure: int = 100
     gain: int = 60
 
-    
+
 default_cameras = {
     "wrist": WristCamera(),
     "top": TopCamera(),
@@ -97,6 +98,7 @@ class DataConfig:
         "action_pos",
         "action_orien",
         "action_gripper",
+        "progress",
     )
 
     # Whether actions are relative to current pose
