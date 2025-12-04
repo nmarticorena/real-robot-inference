@@ -183,7 +183,7 @@ def train(
 
 def main():
     from rs_imle_policy.configs.default_configs import (
-        PickPlaceRSMLERelativeConfig as Config,
+        PickPlaceRSMLEConfig as Config,
     )
 
     args = tyro.cli(Config)
