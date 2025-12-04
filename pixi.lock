@@ -176,6 +176,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/importlib-metadata-8.7.0-pyhe01879c_1.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/importlib-resources-6.5.2-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/importlib_resources-6.5.2-pyhd8ed1ab_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/noarch/inquirerpy-0.3.4-pyhd8ed1ab_1.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/intel-gmmlib-22.8.2-hb700be7_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/intel-media-driver-25.3.4-hecca717_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/ipykernel-7.1.0-pyha191276_0.conda
@@ -426,6 +427,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/linux-64/pcre2-10.46-h1321c63_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pdbpp-0.11.7-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pexpect-4.9.0-pyhd8ed1ab_1.conda
+      - conda: https://conda.anaconda.org/conda-forge/noarch/pfzy-0.3.4-pyhd8ed1ab_1.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/pillow-12.0.0-py311h07c5bb8_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pims-0.7-pyhd8ed1ab_1.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/pixman-0.46.4-h54a6638_1.conda
@@ -619,7 +621,8 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/db/3c/33bac158f8ab7f89b2e59426d5fe2e4f63f7ed25df84c036890172b412b5/cfgv-3.5.0-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/e4/33/58702880fe6bb3ed91cb21e1c92b002f9b73e32c0c5e3e9e2c0a94eaac61/colored-2.3.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/33/6b/e0547afaf41bf2c42e52430072fa5658766e3d65bd4b03a563d1b6336f57/distlib-0.4.0-py2.py3-none-any.whl
-      - pypi: git+https://github.com/nmarticorena/frankx.git#2e8ba782e67c10ab2a0db44cb3a08b1fb0059adf
+      - pypi: git+https://github.com/nmarticorena/frankx.git?rev=legacy_version#5aae4d5e549969f4f31e2847fe007833081a172b
+      - pypi: git+https://github.com/TimSchneider42/franky.git#f847b7c29b466d5bc29d6d810c08f9844c4ec5ce
       - pypi: https://files.pythonhosted.org/packages/0f/1c/e5fd8f973d4f375adb21565739498e2e9a1e54c858a97b9a8ccfdc81da9b/identify-2.6.15-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/d2/1d/1b658dbd2b9fa9c4c9f32accbfc0205d532c8c6194dc0f2a4c0428e7128a/nodeenv-1.9.1-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/e2/7a/cba41bab339a8f9d02767f1ed1493e920d160c938bb09a52f54891c49368/panda_python-0.8.1-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
@@ -2372,10 +2375,16 @@ packages:
   - pkg:pypi/fqdn?source=hash-mapping
   size: 16705
   timestamp: 1733327494780
-- pypi: git+https://github.com/nmarticorena/frankx.git#2e8ba782e67c10ab2a0db44cb3a08b1fb0059adf
+- pypi: git+https://github.com/nmarticorena/frankx.git?rev=legacy_version#5aae4d5e549969f4f31e2847fe007833081a172b
   name: frankx
-  version: 0.2.0
+  version: 0.1.1
   requires_python: '>=3.6'
+- pypi: git+https://github.com/TimSchneider42/franky.git#f847b7c29b466d5bc29d6d810c08f9844c4ec5ce
+  name: franky-control
+  version: 1.1.3
+  requires_dist:
+  - numpy
+  requires_python: '>=3.7'
 - conda: https://conda.anaconda.org/conda-forge/linux-64/freeglut-3.2.2-ha6d2627_3.conda
   sha256: 676540a8e7f73a894cb1fcb870e7bec623ec1c0a2d277094fd713261a02d8d56
   md5: 84ec3f5b46f3076be49f2cf3f1cfbf02
@@ -3038,6 +3047,19 @@ packages:
   - pkg:pypi/importlib-resources?source=hash-mapping
   size: 33781
   timestamp: 1736252433366
+- conda: https://conda.anaconda.org/conda-forge/noarch/inquirerpy-0.3.4-pyhd8ed1ab_1.conda
+  sha256: 3a7bd02ef6e96e85a0ba85a85b1890152ac71120b950e38447a0f22f990b8ac7
+  md5: aab47cffe015fb084a059e333a795f2d
+  depends:
+  - pfzy >=0.3.1,<0.4.0
+  - prompt-toolkit >=3.0.1,<4.0.0
+  - python >=3.9,<4.0
+  license: MIT
+  license_family: MIT
+  purls:
+  - pkg:pypi/inquirerpy?source=hash-mapping
+  size: 44019
+  timestamp: 1735755144203
 - conda: https://conda.anaconda.org/conda-forge/linux-64/intel-gmmlib-22.8.2-hb700be7_0.conda
   sha256: 6bc45d77fb625cb9cd154cfb8c0783a3f21123dd9512b91439675c5f6163c29e
   md5: 478edf896b4dfca175c27b052d76fbc2
@@ -6687,6 +6709,17 @@ packages:
   - pkg:pypi/pexpect?source=hash-mapping
   size: 53561
   timestamp: 1733302019362
+- conda: https://conda.anaconda.org/conda-forge/noarch/pfzy-0.3.4-pyhd8ed1ab_1.conda
+  sha256: 7c18d31939c1cfdf0458af4d44ff34fddeff8e3f39f6fa3c879cbd7b6412a2bd
+  md5: 8e4b5b62ba685436b161f5581060f192
+  depends:
+  - python >=3.9,<4.0
+  license: MIT
+  license_family: MIT
+  purls:
+  - pkg:pypi/pfzy?source=hash-mapping
+  size: 14570
+  timestamp: 1735755125748
 - pypi: https://files.pythonhosted.org/packages/a1/a4/b7c6b1971bdff95429a52e60ab04c21d9176307d36299a07d0076fa63b1b/pgraph_python-0.6.3-py3-none-any.whl
   name: pgraph-python
   version: 0.6.3
