@@ -41,6 +41,14 @@ class SideCamera(CameraConfig):
     exposure: int = 100
     gain: int = 60
 
+@dataclass
+class SideCamera2(CameraConfig):
+    name: str = "side_2"
+    serial_number: str = "036422070913"
+    exposure: int = 100
+    gain: int = 60
+
+
 
 
     
@@ -48,6 +56,7 @@ default_cameras = {
     "wrist": WristCamera(),
     "top": TopCamera(),
     "side": SideCamera(),
+    "side_2": SideCamera2(),
 }
 
 
