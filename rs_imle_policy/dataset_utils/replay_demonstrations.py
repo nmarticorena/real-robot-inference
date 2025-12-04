@@ -13,11 +13,11 @@ import tyro
 args = tyro.cli(LoaderConfig)
 
 vision_config = tyro.extras.from_yaml(
-    VisionConfig, open(args.dataset_path / "vision_config.yml")
+    VisionConfig, open(args.path / "vision_config.yml")
 )
 
 dataset = PolicyDataset(
-    args.dataset_path,
+    args.path,
     vision_config=vision_config,
     visualize=True,
 )
@@ -73,7 +73,7 @@ for episode in rlds:
         # show image
         frames = []
         for camera in vision_config.cameras:
-            frame = ep_data_video[camera.name][idx]
+            frame = ep_data_video[camera][idx]
             frames.append(frame)
         merged = np.hstack(frames)
 
