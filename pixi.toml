@@ -80,6 +80,7 @@ librealsense = ">=2.56.5,<3"
 ipython = ">=9.7.0,<10"
 jupyter = ">=1.1.1,<2"
 nbstripout = ">=0.8.1,<0.9"
+inquirerpy = ">=0.3.4,<0.4"
 
 [pypi-options]
 no-build-isolation = true
