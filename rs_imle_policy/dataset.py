@@ -160,7 +160,7 @@ class PolicyDataset(Dataset):
                 relative_transform
             )
 
-            progress = self.linear_progress(len(df))
+            progress = self.linear_progress(len(df)).reshape(-1, 1)
 
             rlds[episode_index] = {
                 "robot_pos": X_BE_follower_pos,
