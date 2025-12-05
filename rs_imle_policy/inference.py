@@ -1,4 +1,6 @@
 from collections import defaultdict
+import roboticstoolbox as rtb
+import rerun as rr
 
 import spatialmath as sm
 import spatialmath.base as smb
@@ -9,7 +11,7 @@ import cv2
 import os
 
 import time
-from rs_imle_policy.visualizer.rtb import RobotViz
+from rs_imle_policy.visualizer.rerun_tools import ReRunRobot
 
 from rs_imle_policy.configs.default_configs import ExperimentConfigChoice  # noqa: F401
 from rs_imle_policy.configs.train_config import (
@@ -67,8 +69,9 @@ class RobotInferenceController:
         self.config = config
         self.config.training = False
         self.robot = self.create_robot()
-        self.gui = RobotViz(action_horizon=self.config.model.action_horizon)
-        # rtb_panda = rtb.models.Panda()
+
+        rtb_panda = rtb.models.Panda()
+        self.gui = ReRunRobot(rtb_panda)
         self.gripper = Gripper("172.16.0.2", speed=0.1)
         self.perception_system = PerceptionSystem(config.data.vision)
         self.perception_system.start()
@@ -150,8 +153,13 @@ class RobotInferenceController:
         # s = self.robot.get_robo_state(read_once=False)
         s = self.motion.get_robot_state()
 
-        self.gui.step(s.q)
+        self.gui.step_robot(s.q)
         X_BE = np.array(s.O_T_EE).reshape(4, 4, order="F")
+
+        rr.log("state/O_T_ee", rr.Transform3D(
+            translation=X_BE[:3, 3], mat3x3=X_BE[:3, :3],
+            axis_length=0.1)
+        )
 
         rot = utils.matrix_to_rotation_6d(X_BE[:3, :3])
         t = X_BE[:3, 3]
@@ -165,7 +173,7 @@ class RobotInferenceController:
         for ix, cam_name in enumerate(self.config.data.vision.cameras):
             frames[f"{cam_name}"] = images[ix]["color"]
             self.all_frames[f"{cam_name}"].append(images[ix]["color"])
-            cv2.imshow(f"Current View {cam_name}", images[ix]["color"])
+            rr.log(f"/{cam_name}", rr.Image(images[ix]["color"]))
 
         if cv2.waitKey(1) & 0xFF == ord("q"):
             self.record_videos()  # Improve here
@@ -194,7 +202,6 @@ class RobotInferenceController:
         orien_6d = low_dim_state[:, 3:9]
 
         pose = utils.pos_rot_to_se3(torch.from_numpy(pos), torch.from_numpy(orien_6d))
-        self.gui.current_state.T = pose[-1]
 
         with torch.no_grad():
             obs_cond = self.process_inference_vision(obs_deque)
@@ -262,6 +269,19 @@ class RobotInferenceController:
             return True
         return False
 
+    def log_poses(self, trans, quads):
+        n_actions = len(trans)
+        for i in range(n_actions):
+            rr.log(
+                f"action/pose_{i}/transform",
+                rr.Transform3D(
+                        translation = trans[i],
+                        mat3x3 = quads[i],
+                        axis_length=0.1
+                    )
+            )
+            
+
     def start_inference(self):
         obs_stream = (  # noqa: F841
             rx.interval(0.1, scheduler=rx.scheduler.NewThreadScheduler())
@@ -303,8 +323,14 @@ class RobotInferenceController:
             if self.config.data.action_relative:
                 current_pose = utils.pos_rot_to_se3(low_level_pos, low_level_orien)
                 n_trans, n_quads, poses = self.convert_actions(action)
+                r = utils.rotation_6d_to_matrix(action[:, 3:9])
             else:
                 n_trans, n_quads, poses = self.convert_actions(action)
+                r = utils.rotation_6d_to_matrix(action[:, 3:9])
+
+            self.log_poses(n_trans, r.numpy())
+            rr.log(f"action/gripper", rr.Scalars(action[0, -2].tolist()))
+            rr.log(f"action/progress", rr.Scalars(action[0, -1].tolist()))
 
             waypoints = []
             extra_poses = []
@@ -320,16 +346,18 @@ class RobotInferenceController:
                         Affine(trans[0], trans[1], trans[2], q[0], q[1], q[2], q[3])
                     )
                 )
-                if action[i][-1] > 0.5:
+                if action[i][-2] > 0.5:
                     print("clossing")
                     self.close_gripper_if_open()
                 else:
                     print("openning")
                     self.open_gripper_if_closed()
 
-            self.gui.update_actions(extra_poses)
+            # print("progress: ",action[i][-1])
+            # if action[0][-1] > 0.9:
+                # self.done = True
             self.motion.set_next_waypoints(waypoints)
-            time.sleep(0.1 * len(waypoints))
+            time.sleep(0.5 * len(waypoints))
 
     def relative_to_absolute(
         self, action: np.ndarray, current_pose: sm.SE3
@@ -366,6 +394,7 @@ class RobotInferenceController:
 if __name__ == "__main__":
     from rs_imle_policy.configs.train_config import LoaderConfig
     import re
+    
 
     import tyro
     from InquirerPy import inquirer
@@ -376,7 +405,10 @@ if __name__ == "__main__":
     args = tyro.cli(LoaderConfig)
     config = tyro.extras.from_yaml(ExperimentConfig, open(args.path / "config.yaml"))
     config.epoch = args.epoch
+    
+    rr.init("Robot Inference ",recording_id = exp_name, spawn=True)
 
     controller = RobotInferenceController(config, eval_name=exp_name, idx=0)
+
     controller.start_inference()
     controller.perception_system.stop()
