@@ -11,7 +11,12 @@ from dataclasses import dataclass, field
 class AbsoluteActionsConfig(DataConfig):
     """Configuration for absolute action space"""
 
-    action_keys: tuple[str, ...] = ("action_pos", "action_orien", "action_gripper")
+    action_keys: tuple[str, ...] = (
+        "action_pos",
+        "action_orien",
+        "action_gripper",
+        "progress",
+    )
     action_relative: bool = False
 
 
@@ -19,7 +24,12 @@ class AbsoluteActionsConfig(DataConfig):
 class RelativeActionsConfig(DataConfig):
     """Configuration for relative action space"""
 
-    action_keys: tuple[str, ...] = ("relative_pos", "relative_orien", "action_gripper")
+    action_keys: tuple[str, ...] = (
+        "relative_pos",
+        "relative_orien",
+        "action_gripper",
+        "progress",
+    )
     action_relative: bool = True
 
 
@@ -55,6 +65,7 @@ class PickPlaceDiffusionRelativeConfig(ExperimentConfig):
 
     model: RSIMLE | Diffusion = field(default_factory=lambda: Diffusion())
     data: DataConfig = field(default_factory=RelativeActionsConfig)
+
 
 ExperimentConfigChoice = (
     PickPlaceRSMLEConfig
