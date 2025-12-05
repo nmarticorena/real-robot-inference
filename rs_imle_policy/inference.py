@@ -11,7 +11,7 @@ import os
 import time
 from rs_imle_policy.visualizer.rtb import RobotViz
 
-from rs_imle_policy.configs.default_configs import ExperimentConfigChoice # noqa: F841
+from rs_imle_policy.configs.default_configs import ExperimentConfigChoice  # noqa: F401
 from rs_imle_policy.configs.train_config import (
     ExperimentConfig,
     VisionConfig,
@@ -67,7 +67,7 @@ class RobotInferenceController:
         self.config = config
         self.config.training = False
         self.robot = self.create_robot()
-        self.gui = RobotViz(action_horizon = self.config.model.action_horizon)
+        self.gui = RobotViz(action_horizon=self.config.model.action_horizon)
         # rtb_panda = rtb.models.Panda()
         self.gripper = Gripper("172.16.0.2", speed=0.1)
         self.perception_system = PerceptionSystem(config.data.vision)
@@ -141,7 +141,7 @@ class RobotInferenceController:
                 )
                 image_features.append(image_feature)
         obs_features = torch.cat(image_features + [nagent_pos], dim=-1)
-        
+
         obs_cond = obs_features.unsqueeze(0).flatten(start_dim=1)
 
         return obs_cond
@@ -156,7 +156,7 @@ class RobotInferenceController:
         rot = utils.matrix_to_rotation_6d(X_BE[:3, :3])
         t = X_BE[:3, 3]
         width = self.gripper.width()
-        
+
         state = np.concat([t, rot, (width,)])
 
         images = self.perception_system.cams.get()
@@ -168,34 +168,31 @@ class RobotInferenceController:
             cv2.imshow(f"Current View {cam_name}", images[ix]["color"])
 
         if cv2.waitKey(1) & 0xFF == ord("q"):
-            self.record_videos() # Improve here
+            self.record_videos()  # Improve here
 
         return {"state": state, **frames}
 
     def record_videos(self):
         for cam_name in self.config.data.vision.cameras:
             save_path = (
-            f"saved_evaluation_media/{self.eval_name}/{self.idx}_{cam_name}.mp4"
+                f"saved_evaluation_media/{self.eval_name}/{self.idx}_{cam_name}.mp4"
             )
             out = cv2.VideoWriter(
                 save_path, cv2.VideoWriter_fourcc(*"mp4v"), 10, (640, 480)
             )
             for frame in self.all_frames[cam_name]:
-                rgb_frame = cv2.cvtColor(
-                    frame, cv2.COLOR_BGR2RGB
-                )
+                rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 out.write(rgb_frame)
             out.release()
         cv2.destroyAllWindows()
         self.perception_system.stop()
         self.done = True
 
-
     def infer_action(self, obs_deque):
         low_dim_state = np.stack([x["state"] for x in obs_deque])
         pos = low_dim_state[:, :3]
         orien_6d = low_dim_state[:, 3:9]
-    
+
         pose = utils.pos_rot_to_se3(torch.from_numpy(pos), torch.from_numpy(orien_6d))
         self.gui.current_state.T = pose[-1]
 
@@ -283,7 +280,7 @@ class RobotInferenceController:
 
         time.sleep(2)
 
-        all_actions  = np.zeros((0, self.config.action_shape))
+        all_actions = np.zeros((0, self.config.action_shape))
 
         while not self.done:
             while len(self.obs_deque) < self.obs_horizon:
@@ -295,14 +292,13 @@ class RobotInferenceController:
             action = out["action"]
             all_actions = np.concatenate([all_actions, action], axis=0)
             # Im not proud of this, but currently we only do
-            # either relative or absolute actions, Here we 
+            # either relative or absolute actions, Here we
             # need to add any fix
 
             print("elapsed time: ", time.time() - start_time)
             low_level_obs = obs[-1]["state"]
             low_level_pos = low_level_obs[:3]
             low_level_orien = low_level_obs[3:9]
-
 
             if self.config.data.action_relative:
                 current_pose = utils.pos_rot_to_se3(low_level_pos, low_level_orien)
@@ -312,36 +308,36 @@ class RobotInferenceController:
 
             waypoints = []
             extra_poses = []
-            for i in range(0,int(len(action)/2)):
+            for i in range(0, int(len(action) / 2)):
                 trans = n_trans[i]
                 q = n_quads[i]
                 pose = Affine(trans[0], trans[1], trans[2], q[0], q[1], q[2], q[3])
 
-                extra_poses.append(np.array(pose.array()).reshape((4,4), order= "F"))
+                extra_poses.append(np.array(pose.array()).reshape((4, 4), order="F"))
 
                 waypoints.append(
                     Waypoint(
                         Affine(trans[0], trans[1], trans[2], q[0], q[1], q[2], q[3])
                     )
-                ) 
+                )
                 if action[i][-1] > 0.5:
                     print("clossing")
                     self.close_gripper_if_open()
                 else:
                     print("openning")
                     self.open_gripper_if_closed()
-                
+
             self.gui.update_actions(extra_poses)
             self.motion.set_next_waypoints(waypoints)
             time.sleep(0.1 * len(waypoints))
-           
 
-
-    def relative_to_absolute(self, action: np.ndarray, current_pose:sm.SE3) -> tuple[list[np.ndarray], list[np.ndarray], list[sm.SE3]]:
+    def relative_to_absolute(
+        self, action: np.ndarray, current_pose: sm.SE3
+    ) -> tuple[list[np.ndarray], list[np.ndarray], list[sm.SE3]]:
         n = action.shape[0]
         t = action[:, :3]
         rot = action[:, 3:-1]
-       
+
         rel_poses = utils.pos_rot_to_se3(torch.from_numpy(t), rot)
         trans = []
         quads = []
@@ -350,19 +346,22 @@ class RobotInferenceController:
             poses.append(poses[-1] * rel_poses[i])
 
             trans.append(poses[-1].t)
-            quads.append(smb.r2q(poses[-1].A[:3, :3], order = "sxyz"))
+            quads.append(smb.r2q(poses[-1].A[:3, :3], order="sxyz"))
         return trans, quads, poses
 
-    def convert_actions(self, action: np.ndarray) -> tuple[list[np.ndarray], list[np.ndarray], list[sm.SE3]]:
+    def convert_actions(
+        self, action: np.ndarray
+    ) -> tuple[list[np.ndarray], list[np.ndarray], list[sm.SE3]]:
         global idx_plot
         t = action[:, :3]
         rot = action[:, 3:-1]
-       
+
         poses = utils.pos_rot_to_se3(torch.from_numpy(t), rot)
         trans = t.tolist()
         quads = utils.rotation_6d_to_quat(torch.from_numpy(rot)).numpy()
-        
+
         return trans, quads, poses
+
 
 if __name__ == "__main__":
     from rs_imle_policy.configs.train_config import LoaderConfig
@@ -378,6 +377,6 @@ if __name__ == "__main__":
     config = tyro.extras.from_yaml(ExperimentConfig, open(args.path / "config.yaml"))
     config.epoch = args.epoch
 
-    controller = RobotInferenceController(config, eval_name= exp_name, idx=0)
+    controller = RobotInferenceController(config, eval_name=exp_name, idx=0)
     controller.start_inference()
     controller.perception_system.stop()
