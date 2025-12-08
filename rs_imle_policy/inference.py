@@ -64,11 +64,14 @@ class PerceptionSystem:
 
 
 class RobotInferenceController:
-    def __init__(self, config: ExperimentConfig, eval_name: str, idx: int):
+    def __init__(
+        self, config: ExperimentConfig, eval_name: str, idx: int, timeout: int
+    ):
         self.seed(42)
         self.config = config
         self.config.training = False
         self.robot = self.create_robot()
+        self.timeout = timeout
 
         rtb_panda = rtb.models.Panda()
         self.gui = ReRunRobot(rtb_panda)
@@ -156,9 +159,11 @@ class RobotInferenceController:
         self.gui.step_robot(s.q)
         X_BE = np.array(s.O_T_EE).reshape(4, 4, order="F")
 
-        rr.log("state/O_T_ee", rr.Transform3D(
-            translation=X_BE[:3, 3], mat3x3=X_BE[:3, :3],
-            axis_length=0.1)
+        rr.log(
+            "state/O_T_ee",
+            rr.Transform3D(
+                translation=X_BE[:3, 3], mat3x3=X_BE[:3, :3], axis_length=0.1
+            ),
         )
 
         rot = utils.matrix_to_rotation_6d(X_BE[:3, :3])
@@ -198,11 +203,7 @@ class RobotInferenceController:
         self.done = True
 
     def infer_action(self, obs_deque):
-        low_dim_state = np.stack([x["state"] for x in obs_deque])
-        pos = low_dim_state[:, :3]
-        orien_6d = low_dim_state[:, 3:9]
-
-        pose = utils.pos_rot_to_se3(torch.from_numpy(pos), torch.from_numpy(orien_6d))
+        # low_dim_state = np.stack([x["state"] for x in obs_deque])
 
         with torch.no_grad():
             obs_cond = self.process_inference_vision(obs_deque)
@@ -275,13 +276,8 @@ class RobotInferenceController:
         for i in range(n_actions):
             rr.log(
                 f"action/pose_{i}/transform",
-                rr.Transform3D(
-                        translation = trans[i],
-                        mat3x3 = quads[i],
-                        axis_length=0.1
-                    )
+                rr.Transform3D(translation=trans[i], mat3x3=quads[i], axis_length=0.1),
             )
-            
 
     def start_inference(self):
         obs_stream = (  # noqa: F841
@@ -330,8 +326,9 @@ class RobotInferenceController:
                 r = utils.rotation_6d_to_matrix(action[:, 3:9])
 
             self.log_poses(n_trans, r.numpy())
-            rr.log(f"action/gripper", rr.Scalars(action[0, -2].tolist()))
-            rr.log(f"action/progress", rr.Scalars(action[0, -1].tolist()))
+            progress = action[:, -1:]
+            rr.log("action/gripper", rr.Scalars(action[0, -2].tolist()))
+            rr.log("action/progress", rr.Scalars(action[0, -1].tolist()))
 
             waypoints = []
             extra_poses = []
@@ -354,11 +351,11 @@ class RobotInferenceController:
                     print("openning")
                     self.open_gripper_if_closed()
 
-            # print("progress: ",action[i][-1])
-            # if action[0][-1] > 0.9:
-                # self.done = True
             self.motion.set_next_waypoints(waypoints)
-            time.sleep(0.5 * len(waypoints))
+            if progress[0] >= 0.95:
+                self.record_videos()
+                self.done = True
+            time.sleep(0.1 * len(waypoints))
 
     def relative_to_absolute(
         self, action: np.ndarray, current_pose: sm.SE3
@@ -395,7 +392,6 @@ class RobotInferenceController:
 if __name__ == "__main__":
     from rs_imle_policy.configs.train_config import LoaderConfig
     import re
-    
 
     import tyro
     from InquirerPy import inquirer
@@ -406,11 +402,14 @@ if __name__ == "__main__":
     args = tyro.cli(LoaderConfig)
     config = tyro.extras.from_yaml(ExperimentConfig, open(args.path / "config.yaml"))
     config.epoch = args.epoch
-    
-    rr.init("Robot Inference ",recording_id = exp_name, spawn = True)
-    #rr.serve_web()
 
-    controller = RobotInferenceController(config, eval_name=exp_name, idx=0)
+    rr.init("Robot Inference ", recording_id=exp_name, spawn=True)
+    rr.save(f"saved_evaluation_media/{exp_name}/rerun_recording.rrd")
+    # rr.serve_web()
+
+    controller = RobotInferenceController(
+        config, eval_name=exp_name, idx=0, timeout=args.timeout
+    )
 
     controller.start_inference()
     controller.perception_system.stop()
