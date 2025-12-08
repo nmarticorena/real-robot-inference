@@ -19,8 +19,9 @@ def convert_to_h5(dataset_path: str, /, vision_config: VisionConfig):
         for episode in tqdm.tqdm(episodes):
             grp = h5f.create_group(f"{episode}")
             for ix, cam_name in enumerate(vision_config.cameras):
+                serial = vision_config.cameras_params[ix].serial_number
                 video = os.path.join(
-                    dataset_path, "episodes", episode, "video", f"{ix}.mp4"
+                    dataset_path, "episodes", episode, "video", f"{serial}.mp4"
                 )
 
                 pims_video = pims.PyAVReaderIndexed(video)
