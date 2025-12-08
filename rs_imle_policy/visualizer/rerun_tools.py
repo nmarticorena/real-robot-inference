@@ -1,10 +1,13 @@
 from numpy.typing import NDArray
+import av
 from typing import Optional
 import rerun as rr
 import spatialgeometry as sg
 import trimesh
 import roboticstoolbox as rtb
 import numpy as np
+
+from rs_imle_policy.configs.train_config import VisionConfig
 
 
 class ReRunRobot:
@@ -58,6 +61,36 @@ class ReRunRobot:
                             vertex_colors=vertex_colour_leader,
                         ),
                     )
+
+    def initialize_video_stream(self, cams: VisionConfig):
+        container = av.open("/dev/null", "w", format="hevc")
+        self.streams = {
+            cam_name: container.add_stream("libx265", rate=30)
+            for cam_name in cams.cameras
+        }
+        for name, stream in self.streams.items():
+            assert isinstance(stream, av.video.stream.VideoStream)
+            stream.width = cams.cameras_params[0].resolution[0]
+            stream.height = cams.cameras_params[0].resolution[1]
+            stream.max_b_frames = 0  # according to rerun docs
+            rr.log(
+                "video_stream/" + name,
+                rr.VideoStream(codec=rr.VideoCodec.H265),
+                static=True,
+            )
+
+    def log_frame(self, frame: NDArray, cam_name: str):
+        """
+        Log a frame of the camera feeds
+        frame [w, h , channels]
+        """
+        av_frame = av.VideoFrame.from_ndarray(frame, format="rgb24")
+        packet = self.streams[cam_name].encode(av_frame)
+        for pkt in packet:
+            rr.log(
+                "video_stream/" + cam_name,
+                rr.VideoStream.from_fields(sample=bytes(pkt)),
+            )
 
     def step_robot(self, q, leader_q: Optional[NDArray] = None):
         transforms = self.robot.fkine_all(q)
