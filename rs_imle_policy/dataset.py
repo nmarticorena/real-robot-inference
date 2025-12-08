@@ -135,8 +135,9 @@ class PolicyDataset(Dataset):
             df = pd.DataFrame(data)
             df["idx"] = range(len(df))
 
-            X_BE_follower = df["X_BE"].tolist()
+            X_BE_follower = df["robot_X_BE"].tolist()
             X_BE_leader = [(self.robot.fkine(np.array(q))).A for q in df["gello_q"]]
+            breakpoint()
 
             X_BE_follower_sm = [sm.SE3(X) for X in X_BE_follower]
             X_BE_leader_sm = [sm.SE3(X) for X in X_BE_leader]
@@ -145,7 +146,7 @@ class PolicyDataset(Dataset):
                 follower.inv() * leader
                 for follower, leader in zip(X_BE_follower_sm, X_BE_leader_sm)
             ]
-            gripper_width = df["gripper_state"].tolist()
+            gripper_width = df["gripper_width"].tolist()
             gripper_width = np.array(gripper_width).reshape(-1, 1)
             gripper_action = df["gripper_action"].tolist()
             gripper_action = np.array(gripper_action).reshape(-1, 1)
