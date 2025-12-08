@@ -231,7 +231,21 @@ class RobotInferenceController:
                     naction = self.policy.noise_scheduler.step(
                         model_output=noise_pred, timestep=k, sample=naction
                     ).prev_sample
-                    actions.append(naction.cpu().numpy())
+
+
+                    debug_denoising = unnormalize_data(naction[0].cpu().numpy(), stats=self.policy.stats["action"])
+                    trans = debug_denoising[:, :3]
+                    rot_6d = debug_denoising[:, 3:9]
+                    rot_mat3x3 = utils.rotation_6d_to_matrix(torch.from_numpy(rot_6d)).numpy()
+                    for i in range(trans.shape[0]):
+                        rr.log(
+                            f"/debug/denoising_step/poses_{i}",
+                            rr.Transform3D(
+                                translation = trans[i],
+                                mat3x3 = rot_mat3x3[i],
+                            axis_length=0.1,)
+                            )
+
 
             elif isinstance(self.config.model, RSIMLE):
                 noise = torch.randn(
@@ -298,7 +312,7 @@ class RobotInferenceController:
 
         all_actions = np.zeros((0, self.config.action_shape))
 
-        refresh_rate_hz = 10 
+        refresh_rate_hz = 5
         target_dt = 1.0 / refresh_rate_hz * 4
 
         while not self.done:
