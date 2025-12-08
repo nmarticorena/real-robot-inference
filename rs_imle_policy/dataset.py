@@ -137,7 +137,6 @@ class PolicyDataset(Dataset):
 
             X_BE_follower = df["robot_X_BE"].tolist()
             X_BE_leader = [(self.robot.fkine(np.array(q))).A for q in df["gello_q"]]
-            breakpoint()
 
             X_BE_follower_sm = [sm.SE3(X) for X in X_BE_follower]
             X_BE_leader_sm = [sm.SE3(X) for X in X_BE_leader]
