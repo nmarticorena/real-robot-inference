@@ -364,7 +364,7 @@ class RobotInferenceController:
     ) -> tuple[list[np.ndarray], list[np.ndarray], list[sm.SE3]]:
         n = action.shape[0]
         t = action[:, :3]
-        rot = action[:, 3:-1]
+        rot = action[:, 3:-2]
 
         rel_poses = utils.pos_rot_to_se3(torch.from_numpy(t), rot)
         trans = []
@@ -382,7 +382,7 @@ class RobotInferenceController:
     ) -> tuple[list[np.ndarray], list[np.ndarray], list[sm.SE3]]:
         global idx_plot
         t = action[:, :3]
-        rot = action[:, 3:-1]
+        rot = action[:, 3:-2]
 
         poses = utils.pos_rot_to_se3(torch.from_numpy(t), rot)
         trans = t.tolist()
@@ -406,7 +406,8 @@ if __name__ == "__main__":
     config = tyro.extras.from_yaml(ExperimentConfig, open(args.path / "config.yaml"))
     config.epoch = args.epoch
     
-    rr.init("Robot Inference ",recording_id = exp_name, spawn=True)
+    rr.init("Robot Inference ",recording_id = exp_name)
+    rr.serve_web()
 
     controller = RobotInferenceController(config, eval_name=exp_name, idx=0)
 
