@@ -21,7 +21,7 @@ dataset = PolicyDataset(
 rlds = dataset.rlds
 
 rr.init("replay_demonstration_rerun", recording_id="test", spawn=True)
-gui = rerun_tools.ReRunRobot(rtb.models.Panda())
+gui = rerun_tools.ReRunRobot(rtb.models.Panda(), leader= True)
 gui.load_meshes()
 
 
