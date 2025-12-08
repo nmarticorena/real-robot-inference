@@ -65,7 +65,7 @@ class ReRunRobot:
     def initialize_video_stream(self, cams: VisionConfig):
         container = av.open("/dev/null", "w", format="hevc")
         self.streams = {
-            cam_name: container.add_stream("libx265", rate=30)
+            cam_name: container.add_stream("libx265", rate=10) # This needs to be the same obs
             for cam_name in cams.cameras
         }
         for name, stream in self.streams.items():

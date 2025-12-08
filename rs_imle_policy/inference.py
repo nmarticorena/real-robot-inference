@@ -72,6 +72,7 @@ class RobotInferenceController:
 
         rtb_panda = rtb.models.Panda()
         self.gui = ReRunRobot(rtb_panda)
+        self.gui.initialize_video_stream(config.data.vision)
         self.gripper = Gripper("172.16.0.2", speed=0.1)
         self.perception_system = PerceptionSystem(config.data.vision)
         self.perception_system.start()
@@ -150,7 +151,6 @@ class RobotInferenceController:
         return obs_cond
 
     def get_observation(self):
-        # s = self.robot.get_robo_state(read_once=False)
         s = self.motion.get_robot_state()
 
         self.gui.step_robot(s.q)
@@ -173,7 +173,8 @@ class RobotInferenceController:
         for ix, cam_name in enumerate(self.config.data.vision.cameras):
             frames[f"{cam_name}"] = images[ix]["color"]
             self.all_frames[f"{cam_name}"].append(images[ix]["color"])
-            rr.log(f"/{cam_name}", rr.Image(images[ix]["color"]))
+            self.gui.log_frame(images[ix]["color"], cam_name)
+            # rr.log(f"/{cam_name}", rr.Image(images[ix]["color"]))
 
         if cv2.waitKey(1) & 0xFF == ord("q"):
             self.record_videos()  # Improve here
@@ -406,8 +407,8 @@ if __name__ == "__main__":
     config = tyro.extras.from_yaml(ExperimentConfig, open(args.path / "config.yaml"))
     config.epoch = args.epoch
     
-    rr.init("Robot Inference ",recording_id = exp_name)
-    rr.serve_web()
+    rr.init("Robot Inference ",recording_id = exp_name, spawn = True)
+    #rr.serve_web()
 
     controller = RobotInferenceController(config, eval_name=exp_name, idx=0)
 
