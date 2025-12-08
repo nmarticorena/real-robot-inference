@@ -91,7 +91,7 @@ class Policy:
                 [
                     transforms.ToPILImage(),
                     transforms.Resize((240, 320)),
-                    transforms.RandomCrop((216, 288)),
+                    transforms.CenterCrop((216, 288)),
                     transforms.ToTensor(),
                 ]
             )
