@@ -67,6 +67,7 @@ class RobotInferenceController:
     def __init__(
         self, config: ExperimentConfig, eval_name: str, idx: int, timeout: int
     ):
+        self.last_called_obs = time.time() 
         self.seed(42)
         self.config = config
         self.config.training = False
@@ -75,7 +76,6 @@ class RobotInferenceController:
 
         rtb_panda = rtb.models.Panda()
         self.gui = ReRunRobot(rtb_panda)
-        self.gui.initialize_video_stream(config.data.vision)
         self.gripper = Gripper("172.16.0.2", speed=0.1)
         self.perception_system = PerceptionSystem(config.data.vision)
         self.perception_system.start()
@@ -160,7 +160,7 @@ class RobotInferenceController:
         X_BE = np.array(s.O_T_EE).reshape(4, 4, order="F")
 
         rr.log(
-            "state/O_T_ee",
+            "/state/O_T_ee",
             rr.Transform3D(
                 translation=X_BE[:3, 3], mat3x3=X_BE[:3, :3], axis_length=0.1
             ),
@@ -178,8 +178,7 @@ class RobotInferenceController:
         for ix, cam_name in enumerate(self.config.data.vision.cameras):
             frames[f"{cam_name}"] = images[ix]["color"]
             self.all_frames[f"{cam_name}"].append(images[ix]["color"])
-            self.gui.log_frame(images[ix]["color"], cam_name)
-            # rr.log(f"/{cam_name}", rr.Image(images[ix]["color"]))
+            self.gui.log_frame_encoded(images[ix]["color"], cam_name)
 
         if cv2.waitKey(1) & 0xFF == ord("q"):
             self.record_videos()  # Improve here
@@ -275,7 +274,7 @@ class RobotInferenceController:
         n_actions = len(trans)
         for i in range(n_actions):
             rr.log(
-                f"action/pose_{i}/transform",
+                f"/action/pose_{i}/transform",
                 rr.Transform3D(translation=trans[i], mat3x3=quads[i], axis_length=0.1),
             )
 
@@ -299,11 +298,15 @@ class RobotInferenceController:
 
         all_actions = np.zeros((0, self.config.action_shape))
 
+        refresh_rate_hz = 10 
+        target_dt = 1.0 / refresh_rate_hz * 4
+
         while not self.done:
             while len(self.obs_deque) < self.obs_horizon:
                 time.sleep(0.001)
                 print("Waiting for observation")
 
+            infer_start_time = time.perf_counter()
             obs = self.obs_deque.copy()
             out = self.infer_action(obs)
             action = out["action"]
@@ -327,12 +330,12 @@ class RobotInferenceController:
 
             self.log_poses(n_trans, r.numpy())
             progress = action[:, -1:]
-            rr.log("action/gripper", rr.Scalars(action[0, -2].tolist()))
-            rr.log("action/progress", rr.Scalars(action[0, -1].tolist()))
+            rr.log("/action/gripper", rr.Scalars(action[0, -2].tolist()))
+            rr.log("/action/progress", rr.Scalars(action[0, -1].tolist()))
 
             waypoints = []
             extra_poses = []
-            for i in range(0, int(len(action) / 2)):
+            for i in range(1, int(len(action) / 2)):
                 trans = n_trans[i]
                 q = n_quads[i]
                 pose = Affine(trans[0], trans[1], trans[2], q[0], q[1], q[2], q[3])
@@ -345,17 +348,20 @@ class RobotInferenceController:
                     )
                 )
                 if action[i][-2] > 0.5:
-                    print("clossing")
                     self.close_gripper_if_open()
                 else:
-                    print("openning")
                     self.open_gripper_if_closed()
 
             self.motion.set_next_waypoints(waypoints)
-            if progress[0] >= 0.95:
+            if progress[0] >= 0.85:
                 self.record_videos()
                 self.done = True
-            time.sleep(0.1 * len(waypoints))
+
+            elapsed_time = time.perf_counter() - infer_start_time
+            remaining_time = target_dt - elapsed_time
+            if remaining_time > 0:
+                time.sleep(remaining_time)
+            # time.sleep(0.4 * len(waypoints))
 
     def relative_to_absolute(
         self, action: np.ndarray, current_pose: sm.SE3
@@ -404,7 +410,8 @@ if __name__ == "__main__":
     config.epoch = args.epoch
 
     rr.init("Robot Inference ", recording_id=exp_name, spawn=True)
-    rr.save(f"saved_evaluation_media/{exp_name}/rerun_recording.rrd")
+    os.makedirs(f"saved_evaluation_media/{exp_name}", exist_ok=True)
+    # rr.save(f"saved_evaluation_media/{exp_name}/rerun_recording.rrd")
     # rr.serve_web()
 
     controller = RobotInferenceController(
