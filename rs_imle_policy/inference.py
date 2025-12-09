@@ -67,7 +67,8 @@ class RobotInferenceController:
     def __init__(
         self, config: ExperimentConfig, eval_name: str, idx: int, timeout: int
     ):
-        self.last_called_obs = time.time() 
+        self.infer_idx = 0
+        self.last_called_obs = time.time()
         self.seed(42)
         self.config = config
         self.config.training = False
@@ -118,6 +119,12 @@ class RobotInferenceController:
 
         self.obs_horizon = self.config.model.obs_horizon
         self.obs_deque = collections.deque(maxlen=self.config.model.obs_horizon)
+
+        if isinstance(self.config.model, RSIMLE):
+            self.prev_traj = torch.randn(
+                (1, self.config.model.pred_horizon, self.config.action_shape),
+                device=self.policy.device,
+            )
 
     def process_inference_vision(self, obs_deque):
         images = []
@@ -203,6 +210,7 @@ class RobotInferenceController:
 
     def infer_action(self, obs_deque):
         # low_dim_state = np.stack([x["state"] for x in obs_deque])
+        self.infer_idx += 1
 
         with torch.no_grad():
             obs_cond = self.process_inference_vision(obs_deque)
@@ -216,11 +224,11 @@ class RobotInferenceController:
                 )
                 naction = noisy_action
                 # init scheduler
+                assert self.policy.noise_scheduler is not None
                 self.policy.noise_scheduler.set_timesteps(
                     self.config.model.num_diffusion_iters
                 )
 
-                actions = []
                 for k in self.policy.noise_scheduler.timesteps:
                     # predict noise
                     noise_pred = self.policy.ema_nets["noise_pred_net"](
@@ -229,32 +237,86 @@ class RobotInferenceController:
 
                     # inverse diffusion step (remove noise)
                     naction = self.policy.noise_scheduler.step(
-                        model_output=noise_pred, timestep=k, sample=naction
+                        model_output=noise_pred, timestep=int(k), sample=naction
                     ).prev_sample
 
-
-                    debug_denoising = unnormalize_data(naction[0].cpu().numpy(), stats=self.policy.stats["action"])
+                    debug_denoising = unnormalize_data(
+                        naction[0].cpu().numpy(), stats=self.policy.stats["action"]
+                    )
                     trans = debug_denoising[:, :3]
                     rot_6d = debug_denoising[:, 3:9]
-                    rot_mat3x3 = utils.rotation_6d_to_matrix(torch.from_numpy(rot_6d)).numpy()
+                    rot_mat3x3 = utils.rotation_6d_to_matrix(
+                        torch.from_numpy(rot_6d)
+                    ).numpy()
                     for i in range(trans.shape[0]):
                         rr.log(
                             f"/debug/denoising_step/poses_{i}",
                             rr.Transform3D(
-                                translation = trans[i],
-                                mat3x3 = rot_mat3x3[i],
-                            axis_length=0.1,)
-                            )
-
+                                translation=trans[i],
+                                mat3x3=rot_mat3x3[i],
+                                axis_length=0.1,
+                            ),
+                        )
 
             elif isinstance(self.config.model, RSIMLE):
-                noise = torch.randn(
-                    (1, self.config.model.pred_horizon, self.config.action_shape),
-                    device=self.config.model.device,
-                )
-                # clip noise
-                noise = torch.clamp(noise, -1, 1)
-                naction = self.policy.nets["generator"](noise, global_cond=obs_cond)
+                if self.config.model.traj_consistency:
+                    noise = torch.randn(
+                        (32, self.config.model.pred_horizon, self.config.action_shape),
+                        device=self.policy.device,
+                    )
+                    naction = self.policy.nets[
+                        "generator"
+                    ](
+                        noise, global_cond=obs_cond
+                    )  # TODO: Add a rr.log of this, it could be points than then we colorcode by distance
+
+                    prev_traj_end = self.prev_traj[:, 8:].reshape(1, -1)
+                    gen_traj_start = naction[:, :8, :].reshape(32, -1)
+
+                    # Pick the generated trajectory that has its start closest to the end of the prev traj
+                    distances = torch.cdist(gen_traj_start, prev_traj_end)
+                    min_idx = distances.argmin(dim=0)
+                    action_debug = unnormalize_data(
+                        naction[min_idx].cpu().numpy(),
+                        stats=self.policy.stats["action"],
+                    )
+                    naction = naction[min_idx]
+
+                    rr.log(
+                        "/debug/sampled_trajectories",
+                        rr.Points3D(
+                            positions=action_debug[:, :3],
+                            colors=utils.colormap(
+                                distances,
+                                distances.min().item(),
+                                distances.max().item(),
+                            ),
+                        ),
+                    )
+
+                    if self.infer_idx % self.config.model.periodic_length == 0:
+                        self.prev_traj = torch.randn(
+                            (
+                                1,
+                                self.config.model.pred_horizon,
+                                self.config.model.action_horizon,
+                            ),
+                            device=self.policy.device,
+                        )
+                    else:
+                        self.prev_traj = naction
+
+                    # For debugging
+                    trans = action_debug[:, :3]
+
+                else:
+                    noise = torch.randn(
+                        (1, self.config.model.pred_horizon, self.config.action_shape),
+                        device=self.config.model.device,
+                    )
+                    # clip noise
+                    noise = torch.clamp(noise, -1, 1)
+                    naction = self.policy.nets["generator"](noise, global_cond=obs_cond)
             else:
                 raise NotImplementedError("Model not supported for inference.")
 
@@ -375,7 +437,6 @@ class RobotInferenceController:
             remaining_time = target_dt - elapsed_time
             if remaining_time > 0:
                 time.sleep(remaining_time)
-            # time.sleep(0.4 * len(waypoints))
 
     def relative_to_absolute(
         self, action: np.ndarray, current_pose: sm.SE3
