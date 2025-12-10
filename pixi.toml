@@ -10,7 +10,7 @@ args = [
     { arg = "exp_name" },
 ]
 cmd = """
-rsync -avz --update  \
+rsync -avz  \
     --rsync-path='/home/nmarticorena/.pixi/bin/rsync' \
     --include='*.yaml' \
     --include='*last*' \
@@ -22,16 +22,6 @@ rsync -avz --update  \
 
 [tasks.sync_datasets]
 cmd = "rsync -avz --ignore-existing nmarticorena@rllab.qut.edu.au:/home/nmarticorena/panda_dc/data/ data/"
-# [tasks.copy_all]
-# cmd = "echo Copy all weights"
-# args = [
-#     { arg = "exp_name" },
-# ]
-# depends-on = [
-#     { task = "copy", args = [{pattern = "*.yaml" }, {exp_name = "{{ exp_name }}"}] },
-#     { task = "copy", args = [{pattern = "*last*" }, {exp_name = "{{ exp_name }}"}] },
-#     { task = "copy", args = [{pattern = "*.pkl" }, {exp_name = "{{ exp_name }}"}] },
-# ]
 
 [system-requirements]
 cuda = "12.8"
