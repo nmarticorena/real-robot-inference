@@ -1,5 +1,4 @@
 from numpy.typing import NDArray
-import time
 import av
 from typing import Optional
 import rerun as rr
@@ -19,11 +18,18 @@ class ReRunRobot:
         self.leader = leader
         self.load_meshes()
 
+    def log_pose(self, position, quaternion, name="pose"):
+        # Pytorch 3D and rerun use a different order
+        quad = [quaternion[1], quaternion[2], quaternion[3], quaternion[0]]
+        rr.log(
+            name,
+            rr.Transform3D(
+                translation=position, rotation=rr.Quaternion(xyzw=quad), axis_length=0.1
+            ),
+        )
+
     def load_meshes(self):
-        transforms = self.robot.fkine_all(self.robot.qr)
         for ix, link in enumerate(self.robot.links):
-            R = transforms[ix + 1].R
-            O_T_ix = transforms[ix + 1]
             if len(link.geometry) == 0:
                 continue
             geom = link.geometry[0]
@@ -31,11 +37,7 @@ class ReRunRobot:
                 mesh_path = geom.filename
                 mesh = trimesh.load_mesh(mesh_path, process=False)
                 vertex_colour = mesh.visual.to_color().vertex_colors
-                # rr.log(
-                #     self.robot_name + "/" + link.name,
-                #     rr.Transform3D(translation=O_T_ix.t, mat3x3=R),
-                #     static=True,
-                # )
+
                 rr.log(
                     self.robot_name + "/" + link.name,
                     rr.Mesh3D(
@@ -47,11 +49,6 @@ class ReRunRobot:
                     static=True,
                 )
                 if self.leader:
-                    # rr.log(
-                    #     self.leader_name + "/" + link.name,
-                    #     rr.Transform3D(translation=O_T_ix.t, mat3x3=R),
-                    #     static=True,
-                    # )
                     vertex_colour_leader = vertex_colour.copy()
                     vertex_colour_leader = vertex_colour_leader.reshape(-1, 4)
                     vertex_colour_leader[:, -1] = int(0.5 * 255)
@@ -66,11 +63,13 @@ class ReRunRobot:
                         ),
                         static=True,
                     )
- 
+
     def initialize_video_stream(self, cams: VisionConfig):
         container = av.open("/dev/null", "w", format="hevc")
         self.streams = {
-            cam_name: container.add_stream("libx265", rate = 1) # This needs to be the same obs
+            cam_name: container.add_stream(
+                "libx265", rate=1
+            )  # This needs to be the same obs
             for cam_name in cams.cameras
         }
         for name, stream in self.streams.items():
@@ -79,13 +78,17 @@ class ReRunRobot:
             stream.height = cams.cameras_params[0].resolution[1]
             stream.max_b_frames = 0  # according to rerun docs
             fake_frame = np.zeros(
-                (cams.cameras_params[0].resolution[1], cams.cameras_params[0].resolution[0], 3),
+                (
+                    cams.cameras_params[0].resolution[1],
+                    cams.cameras_params[0].resolution[0],
+                    3,
+                ),
                 dtype=np.uint8,
             )
             av_frame = av.VideoFrame.from_ndarray(fake_frame, format="rgb24")
             packet = stream.encode(av_frame)
             for packet in packet:
-                rr.set_time("time", duration=float(pkt.pts * pkt.time_base))
+                rr.set_time("time", duration=float(packet.pts * packet.time_base))
                 rr.log(
                     "video_stream/" + name,
                     rr.VideoStream(codec=rr.VideoCodec.H265, sample=bytes(packet)),
@@ -102,18 +105,14 @@ class ReRunRobot:
             rr.set_time("time", duration=float(pkt.pts * pkt.time_base))
             rr.log(
                 "/video_stream/" + cam_name,
-                rr.VideoStream(codec = rr.VideoCodec.H265,sample=bytes(pkt)),
+                rr.VideoStream(codec=rr.VideoCodec.H265, sample=bytes(pkt)),
             )
 
-    def log_frame_encoded(self, frame: NDArray, cam_name:str):
+    def log_frame_encoded(self, frame: NDArray, cam_name: str):
         """
         Alternative approach until the av is working
         """
-        rr.log(
-            "/video_stream/" + cam_name,
-            rr.Image(frame).compress()
-        )
-
+        rr.log("/video_stream/" + cam_name, rr.Image(frame).compress())
 
     def step_robot(self, q, leader_q: Optional[NDArray] = None):
         transforms = self.robot.fkine_all(q)
