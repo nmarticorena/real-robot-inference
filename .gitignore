@@ -1,4 +1,6 @@
 *.mp4
+*.rrd
+saved_evaluation_media/*
 
 saved_weights
 # Byte-compiled / optimized / DLL files
