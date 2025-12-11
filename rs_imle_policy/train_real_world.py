@@ -183,7 +183,7 @@ def train(
 
 def main():
     from rs_imle_policy.configs.default_configs import (
-        PickPlaceRSMLEConfig as Config,
+        PickPlaceRSMLERelativeConfig as Config,
     )
 
     args = tyro.cli(Config)
@@ -200,6 +200,7 @@ def main():
         low_dim_obs_keys=args.data.lowdim_obs_keys,
         action_keys=args.data.action_keys,
         vision_config=args.data.vision,
+        use_next_state=args.data.use_next_state,
     )
     if args.debug:
         dataloader = torch.utils.data.DataLoader(

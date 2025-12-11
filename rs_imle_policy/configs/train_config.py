@@ -104,6 +104,9 @@ class DataConfig:
     # Whether actions are relative to current pose
     action_relative: bool = False
 
+    use_next_state: bool = True
+    # Wherter to use the next_state or the leader position
+
     # Vision configuration
     vision: VisionConfig = field(default_factory=VisionConfig)
 

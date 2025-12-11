@@ -2,9 +2,10 @@ import os
 import pathlib
 import json
 import numpy as np
+from numpy.typing import NDArray
 import torch
 from torch.utils.data import Dataset
-from typing import Optional, Callable
+from typing import Optional, Callable, List
 import pandas as pd
 import roboticstoolbox as rtb
 import time
@@ -52,6 +53,7 @@ class PolicyDataset(Dataset):
         action_keys: tuple[str, ...] = (),
         vision_config: VisionConfig = VisionConfig(),
         visualize: bool = False,
+        use_next_state: bool = True,
     ):
         self.dataset_path = dataset_path
         self.pred_horizon = pred_horizon
@@ -63,19 +65,10 @@ class PolicyDataset(Dataset):
 
         self.vision_config = vision_config
 
+        self.use_next_state = use_next_state
+
         self.transform = transform
         self.robot = rtb.models.Panda()
-
-        # tranform to finray tcp
-        X_FE = np.array(
-            [
-                [0.70710678, 0.70710678, 0.0, 0.0],
-                [-0.70710678, 0.70710678, 0, 0],
-                [0.0, 0.0, 1.0, 0.2],
-                [0.0, 0.0, 0.0, 1.0],
-            ]
-        )
-        self.X_FE = sm.SE3(X_FE, check=False).norm()
 
         # Load all episodes and create sample indices
         self.rlds = self.create_rlds_dataset()
@@ -117,6 +110,17 @@ class PolicyDataset(Dataset):
 
             self.action_shape = self.rlds[0]["action"].shape[1]
 
+    def get_relative_transform(
+        self, current_pose: List[NDArray], next_pose: List[NDArray]
+    ):
+        current_pose_sm = [sm.SE3(pose) for pose in current_pose]
+        next_pose_sm = [sm.SE3(pose) for pose in next_pose]
+
+        relative_transform = [
+            current.inv() * next for current, next in zip(current_pose_sm, next_pose_sm)
+        ]
+        return relative_transform
+
     def create_rlds_dataset(self):
         rlds = {}
         episodes = sorted(
@@ -135,27 +139,25 @@ class PolicyDataset(Dataset):
             df = pd.DataFrame(data)
             df["idx"] = range(len(df))
 
-            X_BE_follower = df["robot_X_BE"].tolist()
-            X_BE_leader = [(self.robot.fkine(np.array(q))).A for q in df["gello_q"]]
+            X_BE_current = df["robot_X_BE"].tolist()
 
-            X_BE_follower_sm = [sm.SE3(X) for X in X_BE_follower]
-            X_BE_leader_sm = [sm.SE3(X) for X in X_BE_leader]
+            if self.use_next_state:
+                X_BE_next = X_BE_current[1:]
+                X_BE_next.append(X_BE_current[-1])
+            else:
+                X_BE_next = [(self.robot.fkine(np.array(q))).A for q in df["gello_q"]]
 
-            relative_transform = [
-                follower.inv() * leader
-                for follower, leader in zip(X_BE_follower_sm, X_BE_leader_sm)
-            ]
+            relative_transform = self.get_relative_transform(X_BE_current, X_BE_next)
+
             gripper_width = df["gripper_width"].tolist()
             gripper_width = np.array(gripper_width).reshape(-1, 1)
             gripper_action = df["gripper_action"].tolist()
             gripper_action = np.array(gripper_action).reshape(-1, 1)
 
-            X_BE_follower_pos, X_BE_follower_orien = utils.extract_robot_pos_orien(
-                X_BE_follower
+            X_BE_current_pos, X_BE_current_orien = utils.extract_robot_pos_orien(
+                X_BE_current
             )
-            X_BE_leader_pos, X_BE_leader_orien = utils.extract_robot_pos_orien(
-                X_BE_leader
-            )
+            X_BE_next_pos, X_BE_next_orien = utils.extract_robot_pos_orien(X_BE_next)
             relative_pos, relative_orien = utils.extract_robot_pos_orien(
                 relative_transform
             )
@@ -163,15 +165,15 @@ class PolicyDataset(Dataset):
             progress = self.linear_progress(len(df)).reshape(-1, 1)
 
             rlds[episode_index] = {
-                "robot_pos": X_BE_follower_pos,
-                "robot_orien": X_BE_follower_orien,
+                "robot_pos": X_BE_current_pos,
+                "robot_orien": X_BE_current_orien,
                 "gripper_state": gripper_width,
-                "action_orien": X_BE_leader_orien,
-                "action_pos": X_BE_leader_pos,
+                "action_pos": X_BE_next_pos,
+                "action_orien": X_BE_next_orien,
                 "relative_pos": relative_pos,
                 "relative_orien": relative_orien,
                 "action_gripper": gripper_action,
-                "X_BE": X_BE_follower,
+                "X_BE": X_BE_current,
                 "gello_q": df["gello_q"].tolist(),
                 "robot_q": df["robot_q"].tolist(),
                 "progress": progress,
