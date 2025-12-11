@@ -68,7 +68,7 @@ class PerceptionSystem:
 
 class RobotInferenceController:
     def __init__(
-        self, config: ExperimentConfig, eval_name: str, idx: int, timeout: int
+        self, config: ExperimentConfig, eval_name: str, timeout: int
     ):
         self.infer_idx = 0
         self.last_called_obs = time.time()
@@ -90,7 +90,10 @@ class RobotInferenceController:
         self.eval_name = eval_name
         self.all_frames = defaultdict(list)
         self.done = False
-        self.idx = str(idx)
+        self.idx = 0
+
+        
+
 
         # create folder to save images
         os.makedirs(f"saved_evaluation_media/{self.eval_name}", exist_ok=True)
@@ -222,9 +225,6 @@ class RobotInferenceController:
                 rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 out.write(rgb_frame)
             out.release()
-        cv2.destroyAllWindows()
-        self.perception_system.stop()
-        self.done = True
 
     def infer_action(self, obs_deque):
         # low_dim_state = np.stack([x["state"] for x in obs_deque])
@@ -292,31 +292,30 @@ class RobotInferenceController:
                     distances = torch.cdist(gen_traj_start, prev_traj_end)
                     min_idx = distances.argmin(dim=0)
                     action_debug = unnormalize_data(
-                        naction[min_idx].cpu().numpy(),
+                        naction.cpu().numpy(),
                         stats=self.policy.stats["action"],
                     )
                     naction = naction[min_idx]
 
+                    action_debug_pos = action_debug[:,:,:3].reshape(-1,3)
+                    colors = distances.repeat_interleave(self.config.model.pred_horizon,0)
                     rr.log(
                         "/debug/sampled_trajectories",
                         rr.Points3D(
-                            positions=action_debug[:, :3],
+                            positions=action_debug_pos,
                             colors=utils.colormap(
-                                distances,
-                                distances.min().item(),
-                                distances.max().item(),
+                                colors.cpu().numpy(),
+                                colors.min().item(),
+                                colors.max().item(),
                             ),
+                            radii=0.005,
                         ),
                     )
 
                     if self.infer_idx % self.config.model.periodic_length == 0:
                         self.prev_traj = torch.randn(
-                            (
-                                1,
-                                self.config.model.pred_horizon,
-                                self.config.model.action_horizon,
-                            ),
-                            device=self.policy.device,
+                            (1, self.config.model.pred_horizon, self.config.action_shape),
+                        device=self.policy.device,
                         )
                     else:
                         self.prev_traj = naction
@@ -347,6 +346,16 @@ class RobotInferenceController:
 
         return {"action": action}
 
+    def stop_motion(self):
+
+        # pose = Affine(self.motion.get_robot_state().O_T_EE)
+        #
+        # waypoint = Waypoint(pose)
+        # self.motion.set_next_waypoints([waypoint])
+        self.gripper.open(True)
+        self.motion.finish()
+
+
     def close_gripper_if_open(self) -> bool:
         if self.gripper_open:
             self.gripper.close()
@@ -369,27 +378,44 @@ class RobotInferenceController:
                 rr.Transform3D(translation=trans[i], mat3x3=quads[i], axis_length=0.1),
             )
 
+    def run_experiments(self, episodes):
+        for i in range(episodes):
+            self.idx = i
+            print(f"Starting episode {i+1}/{episodes}")
+            self.done = False
+            time.sleep(0.1)
+            self.move_to_start()
+
+            input("Press Enter to start the next episode...")
+            self.obs_deque.clear()
+            self.start_inference()
+            self.all_frames = defaultdict(list)
+            print(f"Finished episode {i+1}/{episodes}")
+
+
+
     def start_inference(self):
+    
+        current_pose = self.robot.current_pose()
+
+        self.motion = WaypointMotion(
+            [Waypoint(current_pose)], return_when_finished=False
+        )
+        move_async = self.robot.move_async(self.motion)  # noqa: F841
+
         obs_stream = (  # noqa: F841
             rx.interval(0.1, scheduler=rx.scheduler.NewThreadScheduler())
             .pipe(ops.map(lambda _: self.get_observation()))
             .subscribe(lambda x: self.obs_deque.append(x))
         )
 
-        current_pose = self.robot.current_pose()
-
-        self.motion = WaypointMotion(
-            [Waypoint(current_pose)], return_when_finished=False
-        )
-        thread = self.robot.move_async(self.motion)  # noqa: F841
-
         start_time = time.time()
 
-        time.sleep(2)
+        time.sleep(0.5)
 
         all_actions = np.zeros((0, self.config.action_shape))
 
-        refresh_rate_hz = 5
+        refresh_rate_hz = 10
         target_dt = 1.0 / refresh_rate_hz * 4
 
         while not self.done:
@@ -426,7 +452,7 @@ class RobotInferenceController:
 
             waypoints = []
             extra_poses = []
-            for i in range(1, int(len(action) / 2)):
+            for i in range(0, int(len(action) / 2)):
                 trans = n_trans[i]
                 q = n_quads[i]
                 pose = Affine(trans[0], trans[1], trans[2], q[0], q[1], q[2], q[3])
@@ -438,20 +464,37 @@ class RobotInferenceController:
                         Affine(trans[0], trans[1], trans[2], q[0], q[1], q[2], q[3])
                     )
                 )
+
+                self.motion.set_next_waypoints([Waypoint(pose)])
+                time.sleep(1 / refresh_rate_hz)
                 if action[i][-2] > 0.5:
                     self.close_gripper_if_open()
                 else:
                     self.open_gripper_if_closed()
 
-            self.motion.set_next_waypoints(waypoints)
-            if progress[0] >= 0.85:
+            if progress[0] >= 0.95:
+                self.stop_motion()
+                obs_stream.dispose()
                 self.record_videos()
                 self.done = True
 
             elapsed_time = time.perf_counter() - infer_start_time
+            rr.log(
+                "/debug/inference_time", rr.Scalars(elapsed_time)
+            )
             remaining_time = target_dt - elapsed_time
             if remaining_time > 0:
                 time.sleep(remaining_time)
+
+            if (time.time() - start_time) > self.timeout:
+                print("Timeout reached, ending inference.")
+                self.stop_motion()
+                obs_stream.dispose()
+                self.record_videos()
+                self.done = True
+
+        move_async.join()
+
 
     def relative_to_absolute(
         self, action: np.ndarray, current_pose: sm.SE3
@@ -492,21 +535,31 @@ if __name__ == "__main__":
     import tyro
     from InquirerPy import inquirer
 
-    exp_name = inquirer.text("Enter the experiment name: ").execute()
-    exp_name = re.sub(r"\s+", "_", exp_name.strip())
-
+    import subprocess
     args = tyro.cli(LoaderConfig)
+
+
+    if args.exp_name is not None:
+        exp_name = args.exp_name
+    else:
+        exp_name = inquirer.text("Enter the experiment name: ").execute()
+        exp_name = re.sub(r"\s+", "_", exp_name.strip())
+
     config = tyro.extras.from_yaml(ExperimentConfig, open(args.path / "config.yaml"))
     config.epoch = args.epoch
+    if isinstance(config.model, RSIMLE):
+        config.model.traj_consistency = True
 
-    rr.init("Robot Inference ", recording_id=exp_name, spawn=True)
+    rr.init("Robot Inference ", recording_id=exp_name)
     os.makedirs(f"saved_evaluation_media/{exp_name}", exist_ok=True)
-    # rr.save(f"saved_evaluation_media/{exp_name}/rerun_recording.rrd")
-    # rr.serve_web()
-
-    controller = RobotInferenceController(
-        config, eval_name=exp_name, idx=0, timeout=args.timeout
+    rr.save(f"saved_evaluation_media/{exp_name}/rerun_recording.rrd")
+    subprocess.Popen(
+        ["rerun", f"saved_evaluation_media/{exp_name}/rerun_recording.rrd"]
     )
 
-    controller.start_inference()
+    controller = RobotInferenceController(
+        config, eval_name=exp_name, timeout=args.timeout
+    )
+
+    controller.run_experiments(10)
     controller.perception_system.stop()

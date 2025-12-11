@@ -5,6 +5,10 @@ name = "real-robot-inference"
 platforms = ["linux-64"]
 version = "0.1.0"
 
+
+[tasks.gripper_home]
+cmd = "python3 scripts/robot/home_gripper.py"
+
 [tasks.copy_all]
 args = [
     { arg = "exp_name" },

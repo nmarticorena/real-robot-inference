@@ -187,6 +187,8 @@ class LoaderConfig:
     path: pathlib.Path
     epoch: Optional[int] = None
     timeout: int = 60  # Timeout for experiment in seconds
+    episodes: int = 10 # total number of episodes to run
+    exp_name: Optional[str] = None
 
 
 if __name__ == "__main__":
