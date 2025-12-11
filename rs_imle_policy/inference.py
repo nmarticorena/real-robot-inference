@@ -150,30 +150,38 @@ class RobotInferenceController:
         image_features = []
         if isinstance(self.config.model, Diffusion):
             for ix, cam_name in enumerate(self.config.data.vision.cameras):
-                image_feature = self.policy.ema_nets[f"vision_encoder_{cam_name}"](
-                    images[ix]
-                )
+
+                with torch.no_grad():
+                    image_feature = self.policy.ema_nets[f"vision_encoder_{cam_name}"](
+                        images[ix]
+                    )
                 image_features.append(image_feature)
         elif isinstance(self.config.model, RSIMLE):
             for ix, cam_name in enumerate(self.config.data.vision.cameras):
-                image_feature = self.policy.nets[f"vision_encoder_{cam_name}"](
-                    images[ix]
-                )
+                with torch.no_grad():
+                    image_feature = self.policy.nets[f"vision_encoder_{cam_name}"](
+                        images[ix]
+                    )
                 image_features.append(image_feature)
 
                 # TODO: Clean here
                 model = self.policy.nets[f"vision_encoder_{cam_name}"]
-                with GradCAM(model=model, target_layers=model.layer4[-1]) as cam:
+                with GradCAM(model=model, target_layers=model.layer4) as cam:
+                    model.eval()
+                    img = images[ix][-1].unsqueeze(0)
                     grayscale_cam = cam(
-                        input_tensor=images[ix], targets=[ClassifierOutputTarget(0)]
+                        input_tensor=img, targets=[ClassifierOutputTarget(0)]
                     )
                     grayscale_cam = grayscale_cam[0, :]
-                    img = images[ix][-1].permute(1, 2, 0).cpu().numpy()
                     img = img - img.min()
                     img = img / img.max()
-                    cam_image = show_cam_on_image(img, grayscale_cam, use_rgb=True)
-                    cv2.imshow(f"Cam_{cam_name}", cam_image)
-                    cv2.waitKey(1)
+                    rr.log(f"/debug/{cam_name}_activation", rr.Image(grayscale_cam).compress())
+                    visualization = show_cam_on_image(
+                        img.squeeze(0).permute(1, 2, 0).cpu().numpy(),
+                        grayscale_cam,
+                        use_rgb=True,
+                    )
+                    rr.log(f"/debug/{cam_name}_overlay", rr.Image(visualization).compress())
 
         obs_features = torch.cat(image_features + [nagent_pos], dim=-1)
 
@@ -230,9 +238,9 @@ class RobotInferenceController:
         # low_dim_state = np.stack([x["state"] for x in obs_deque])
         self.infer_idx += 1
 
-        with torch.no_grad():
-            obs_cond = self.process_inference_vision(obs_deque)
+        obs_cond = self.process_inference_vision(obs_deque)
 
+        with torch.no_grad():
             if isinstance(self.config.model, Diffusion):
                 # initialize action from Guassian noise
                 noisy_action = torch.randn(
@@ -292,10 +300,10 @@ class RobotInferenceController:
                     distances = torch.cdist(gen_traj_start, prev_traj_end)
                     min_idx = distances.argmin(dim=0)
                     action_debug = unnormalize_data(
-                        naction.cpu().numpy(),
+                        batched_naction.cpu().numpy(),
                         stats=self.policy.stats["action"],
                     )
-                    naction = naction[min_idx]
+                    naction = batched_naction[min_idx]
 
                     action_debug_pos = action_debug[:,:,:3].reshape(-1,3)
                     colors = distances.repeat_interleave(self.config.model.pred_horizon,0)
@@ -313,10 +321,9 @@ class RobotInferenceController:
                     )
 
                     if self.infer_idx % self.config.model.periodic_length == 0:
-                        self.prev_traj = torch.randn(
-                            (1, self.config.model.pred_horizon, self.config.action_shape),
-                        device=self.policy.device,
-                        )
+                        index = np.random.uniform(0, 32, size= 1)[0].astype(int)
+                        self.prev_traj = batched_naction[index,:,:].unsqueeze(0)
+
                     else:
                         self.prev_traj = naction
 
