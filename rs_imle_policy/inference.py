@@ -1,4 +1,7 @@
 from collections import defaultdict
+from pytorch_grad_cam import GradCAM
+from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
+from pytorch_grad_cam.utils.image import show_cam_on_image
 import roboticstoolbox as rtb
 import rerun as rr
 
@@ -154,6 +157,21 @@ class RobotInferenceController:
                     images[ix]
                 )
                 image_features.append(image_feature)
+
+                # TODO: Clean here
+                model = self.policy.nets[f"vision_encoder_{cam_name}"]
+                with GradCAM(model=model, target_layers=model.layer4[-1]) as cam:
+                    grayscale_cam = cam(
+                        input_tensor=images[ix], targets=[ClassifierOutputTarget(0)]
+                    )
+                    grayscale_cam = grayscale_cam[0, :]
+                    img = images[ix][-1].permute(1, 2, 0).cpu().numpy()
+                    img = img - img.min()
+                    img = img / img.max()
+                    cam_image = show_cam_on_image(img, grayscale_cam, use_rgb=True)
+                    cv2.imshow(f"Cam_{cam_name}", cam_image)
+                    cv2.waitKey(1)
+
         obs_features = torch.cat(image_features + [nagent_pos], dim=-1)
 
         obs_cond = obs_features.unsqueeze(0).flatten(start_dim=1)
@@ -264,14 +282,11 @@ class RobotInferenceController:
                         (32, self.config.model.pred_horizon, self.config.action_shape),
                         device=self.policy.device,
                     )
-                    naction = self.policy.nets[
-                        "generator"
-                    ](
+                    batched_naction = self.policy.nets["generator"](
                         noise, global_cond=obs_cond
-                    )  # TODO: Add a rr.log of this, it could be points than then we colorcode by distance
-
+                    )
                     prev_traj_end = self.prev_traj[:, 8:].reshape(1, -1)
-                    gen_traj_start = naction[:, :8, :].reshape(32, -1)
+                    gen_traj_start = batched_naction[:, :8, :].reshape(32, -1)
 
                     # Pick the generated trajectory that has its start closest to the end of the prev traj
                     distances = torch.cdist(gen_traj_start, prev_traj_end)
