@@ -46,6 +46,7 @@ class Policy:
                 low_dim_obs_keys=self.config.data.lowdim_obs_keys,
                 action_keys=self.config.data.action_keys,
                 vision_config=self.config.data.vision,
+                use_next_state=self.config.data.use_next_state,
             )  # TODO: Check why does we initialize this twice
             self.dataloader = torch.utils.data.DataLoader(
                 self.dataset,
