@@ -190,7 +190,7 @@ def main():
     wandb.init(project=args.task_name, config=args)
 
     # change wandb name
-    wandb.run.name = f"{wandb.run.name}_{args.model.name}_25p"
+    wandb.run.name = f"{args.exp_name}_{args.model.name}"
 
     dataset = PolicyDataset(
         args.dataset_path,
