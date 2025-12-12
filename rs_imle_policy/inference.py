@@ -108,7 +108,7 @@ class RobotInferenceController:
         self.open_gripper_if_closed()
         self.robot.move(JointMotion(np.deg2rad([-90, 0, 0, -90, 0, 90, 45])))
 
-    def create_robot(self, ip: str = "172.16.0.2", dynamic_rel: float = 0.4):  # 0.4
+    def create_robot(self, ip: str = "172.16.0.2", dynamic_rel: float = 1):  # 0.4
         panda = Robot(ip, repeat_on_error=True, dynamic_rel=dynamic_rel)
         panda.recover_from_errors()
         impedance = [400.0, 400.0, 400.0, 40.0, 40.0, 40.0]
