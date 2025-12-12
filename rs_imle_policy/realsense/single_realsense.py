@@ -569,12 +569,19 @@ class SingleRealsense(mp.Process):
                         # put_data['timestamp'] = put_start_time + step_idx / self.put_fps
                         put_data["timestamp"] = receive_time
                         # print(step_idx, data['timestamp'])
-                        self.ring_buffer.put(put_data, wait=False)
+                        try:
+                            self.ring_buffer.put(put_data, wait=False)
+                        except TimeoutError as e:
+                            print(f"[SingleRealsense {self.serial_number}] dumping data. - {e}")
                 else:
                     step_idx = int((receive_time - put_start_time) * self.put_fps)
                     put_data["step_idx"] = step_idx
                     put_data["timestamp"] = receive_time
-                    self.ring_buffer.put(put_data, wait=False)
+                    try:
+                        self.ring_buffer.put(put_data, wait=False)
+                    except TimeoutError as e:
+                        print(f"[SingleRealsense {self.serial_number}] dumping data. - {e}")
+
 
                 # signal ready
                 if iter_idx == 0:
@@ -630,7 +637,17 @@ class SingleRealsense(mp.Process):
 
                         option = rs.option(command["option_enum"])
                         value = float(command["option_value"])
-                        sensor.set_option(option, value)
+                        sensor_setup = False
+                        while sensor_setup is False:
+                            try:
+                                sensor.set_option(option, value)
+                                sensor_setup = True
+                            except RuntimeError as e:
+                                print(f"[SingleRealsense {self.serial_number}] Failed to set option {option} to {value}: {e}")
+                                print("Retrying after 0.1s...")
+                                time.sleep(0.1)
+                            
+
                         # print('auto', sensor.get_option(rs.option.enable_auto_exposure))
                         # print('exposure', sensor.get_option(rs.option.exposure))
                         # print('gain', sensor.get_option(rs.option.gain))
