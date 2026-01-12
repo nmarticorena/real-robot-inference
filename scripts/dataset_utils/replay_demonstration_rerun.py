@@ -4,16 +4,15 @@ from rs_imle_policy.dataset import PolicyDataset, unnormalize_data
 from rs_imle_policy.configs.train_config import VisionConfig
 from rs_imle_policy.configs.default_configs import ExperimentConfigChoice
 from rs_imle_policy.visualizer import rerun_tools
-import rs_imle_policy.utilities as utils
+import rs_imle_policy.utils.transforms as transform_utils
 
 import rerun as rr
 import tyro
 
 args = tyro.cli(ExperimentConfigChoice)
 
-vision_config = tyro.extras.from_yaml(
-    VisionConfig, open(args.dataset_path / "vision_config.yml")
-)
+with open(args.dataset_path / "vision_config.yml", "r") as f:
+    vision_config = tyro.extras.from_yaml(VisionConfig, f)
 
 dataset = PolicyDataset(
     args.dataset_path,
@@ -25,8 +24,8 @@ dataset = PolicyDataset(
 rlds = dataset.rlds
 
 rr.init("replay_demonstration_rerun", recording_id="test", spawn=True)
-gui = rerun_tools.ReRunRobot(rtb.models.Panda(), leader=True)
-gui.load_meshes()
+gui = rerun_tools.ReRunRobot(rtb.models.Panda(), "leader")
+gui_follower = rerun_tools.ReRunRobot(rtb.models.Panda(), "follower")
 
 
 for episode in rlds:
@@ -43,7 +42,7 @@ for episode in rlds:
         current_orien = unnormalize_data(
             ep_data["robot_orien"][idx], dataset.stats["robot_orien"]
         )  # 6-D representation
-        current_orien = utils.rotation_6d_to_quat(current_orien).numpy()
+        current_orien = transform_utils.rotation_6d_to_quat(current_orien).numpy()
         gui.log_pose(current_pos, current_orien, name="debug/robot_current_pose")
 
         action_pos = unnormalize_data(
@@ -52,7 +51,7 @@ for episode in rlds:
         action_orien = unnormalize_data(
             ep_data["action_orien"][idx], dataset.stats["action_orien"]
         )
-        action_orien = utils.rotation_6d_to_quat(action_orien).numpy()
+        action_orien = transform_utils.rotation_6d_to_quat(action_orien).numpy()
         gui.log_pose(action_pos, action_orien, name="debug/action_pose")
 
         relative_pos = unnormalize_data(
@@ -61,14 +60,15 @@ for episode in rlds:
         relative_orien = unnormalize_data(
             ep_data["relative_orien"][idx], dataset.stats["relative_orien"]
         )
-        relative_orien = utils.rotation_6d_to_quat(relative_orien).numpy()
+        relative_orien = transform_utils.rotation_6d_to_quat(relative_orien).numpy()
         gui.log_pose(
             relative_pos, relative_orien, name="debug/robot_current_pose/relative_pose"
         )
 
         progress = unnormalize_data(ep_data["progress"][idx], dataset.stats["progress"])
 
-        gui.step_robot(robot_q, gello_q)
+        gui.log_robot_state(gello_q)
+        gui_follower.log_robot_state(robot_q)
         for camera in vision_config.cameras:
             rr.log(
                 camera, rr.Image(ep_data_video[camera][idx]).compress(jpeg_quality=80)
@@ -76,4 +76,4 @@ for episode in rlds:
 
         rr.log("action/progress", rr.Scalars(progress))
 
-        time.sleep(0.1)  # 10 hz is the frecuency we loged the data
+        time.sleep(0.1)  # 10 hz is the frequency we loged the data
