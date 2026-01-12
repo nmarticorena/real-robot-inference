@@ -105,7 +105,7 @@ class DataConfig:
     action_relative: bool = False
 
     use_next_state: bool = True
-    # Wherter to use the next_state or the leader position
+    # Whether to use the next_state or the leader position
 
     # Vision configuration
     vision: VisionConfig = field(default_factory=VisionConfig)
@@ -187,7 +187,7 @@ class LoaderConfig:
     path: pathlib.Path
     epoch: Optional[int] = None
     timeout: int = 60  # Timeout for experiment in seconds
-    episodes: int = 10 # total number of episodes to run
+    episodes: int = 10  # total number of episodes to run
     exp_name: Optional[str] = None
 
 
