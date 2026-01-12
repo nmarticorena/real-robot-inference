@@ -125,7 +125,7 @@ class PolicyDataset(Dataset):
         rlds = {}
         episodes = sorted(
             os.listdir(os.path.join(self.dataset_path, "episodes")),
-            key=lambda x: int(x),
+            key=int,
         )
 
         for episode_index, episode in enumerate(episodes):

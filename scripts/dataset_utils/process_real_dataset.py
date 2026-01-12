@@ -13,9 +13,7 @@ def convert_to_h5(dataset_path: str, /, vision_config: VisionConfig):
     dataset_name = dataset_path + "/images.h5"
     # Open an HDF5 file in write mode
     with h5py.File(dataset_name, "w") as h5f:
-        episodes = sorted(
-            os.listdir(os.path.join(dataset_path, "episodes")), key=lambda x: int(x)
-        )
+        episodes = sorted(os.listdir(os.path.join(dataset_path, "episodes")), key=int)
         for episode in tqdm.tqdm(episodes):
             grp = h5f.create_group(f"{episode}")
             for ix, cam_name in enumerate(vision_config.cameras):
