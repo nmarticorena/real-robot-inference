@@ -110,7 +110,7 @@ class Policy:
             self.ema_nets = copy.deepcopy(self.nets)
 
             fpath_ema = os.path.join(self.folder, f"ema_net_epoch_{epoch_str}.pth")
-            state_dict_ema = torch.load(fpath_ema, map_location="cuda")
+            state_dict_ema = torch.load(fpath_ema, map_location=self.device)
             self.ema_nets.load_state_dict(state_dict_ema)
 
             if self.precision == torch.float16:
@@ -122,7 +122,7 @@ class Policy:
         elif isinstance(self.config.model, RSIMLE):
             print("Loading pretrained weights for rs_imle")
             fpath = os.path.join(self.folder, f"net_epoch_{epoch_str}.pth")
-            self.nets.load_state_dict(torch.load(fpath, map_location="cuda"))
+            self.nets.load_state_dict(torch.load(fpath, map_location=self.device))
 
         print("Pretrained weights loaded.")
 
