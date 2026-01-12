@@ -1,12 +1,14 @@
 from collections import defaultdict
-from pytorch_grad_cam import GradCAM
-from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
-from pytorch_grad_cam.utils.image import show_cam_on_image
+from typing import Optional
+from numpy.typing import NDArray
+
+# from pytorch_grad_cam import GradCAM
+# from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
+# from pytorch_grad_cam.utils.image import show_cam_on_image
 import roboticstoolbox as rtb
 import rerun as rr
 
 import spatialmath as sm
-import spatialmath.base as smb
 import numpy as np
 import torch
 import collections
@@ -14,9 +16,11 @@ import cv2
 import os
 
 import time
-from rs_imle_policy.visualizer.rerun_tools import ReRunRobot
 
-from rs_imle_policy.configs.default_configs import ExperimentConfigChoice  # noqa: F401
+
+import rs_imle_policy.utils.viz as viz_utils
+import rs_imle_policy.utils.transforms as transform_utils
+from rs_imle_policy.visualizer.rerun_tools import ReRunRobot
 from rs_imle_policy.configs.train_config import (
     ExperimentConfig,
     VisionConfig,
@@ -25,22 +29,12 @@ from rs_imle_policy.configs.train_config import (
 )
 from rs_imle_policy.policy import Policy
 from rs_imle_policy.dataset import normalize_data, unnormalize_data
-import rs_imle_policy.utilities as utils
+from rs_imle_policy.robot import FrankxRobot
+from rs_imle_policy.realsense.multi_realsense import MultiRealsense
 
 import reactivex as rx
+from reactivex.scheduler import NewThreadScheduler
 from reactivex import operators as ops
-
-from frankx import (
-    Robot,
-    Waypoint,
-    WaypointMotion,
-    JointMotion,
-    Affine,
-    Gripper,
-)
-
-
-from rs_imle_policy.realsense.multi_realsense import MultiRealsense
 
 
 class PerceptionSystem:
@@ -67,33 +61,27 @@ class PerceptionSystem:
 
 
 class RobotInferenceController:
-    def __init__(
-        self, config: ExperimentConfig, eval_name: str, timeout: int
-    ):
+    def __init__(self, config: ExperimentConfig, eval_name: str, timeout: int):
         self.infer_idx = 0
         self.last_called_obs = time.time()
         self.seed(42)
         self.config = config
         self.config.training = False
-        self.robot = self.create_robot()
+        self.robot = FrankxRobot()
+        self.robot.move_to_start(np.deg2rad([-90, 0, 0, -90, 0, 90, 45]))
         self.timeout = timeout
 
         rtb_panda = rtb.models.Panda()
-        self.gui = ReRunRobot(rtb_panda)
-        self.gripper = Gripper("172.16.0.2", speed=0.1)
+        self.gui = ReRunRobot(rtb_panda, "panda")
+
         self.perception_system = PerceptionSystem(config.data.vision)
         self.perception_system.start()
-        self.gripper_open = False
         self.setup_diffusion_policy()
-        self.move_to_start()
 
         self.eval_name = eval_name
         self.all_frames = defaultdict(list)
         self.done = False
         self.idx = 0
-
-        
-
 
         # create folder to save images
         os.makedirs(f"saved_evaluation_media/{self.eval_name}", exist_ok=True)
@@ -103,21 +91,6 @@ class RobotInferenceController:
         np.random.seed(seed)
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
-
-    def move_to_start(self):
-        self.open_gripper_if_closed()
-        self.robot.move(JointMotion(np.deg2rad([-90, 0, 0, -90, 0, 90, 45])))
-
-    def create_robot(self, ip: str = "172.16.0.2", dynamic_rel: float = 1):  # 0.4
-        panda = Robot(ip, repeat_on_error=True, dynamic_rel=dynamic_rel)
-        panda.recover_from_errors()
-        impedance = [400.0, 400.0, 400.0, 40.0, 40.0, 40.0]
-
-        # impedance = np.diag(impedance)
-        panda.set_cartesian_impedance(impedance)
-        panda.accel_rel = 0.1
-        panda.jerk_rel = 0.01
-        return panda
 
     def setup_diffusion_policy(self):
         torch.cuda.empty_cache()
@@ -133,56 +106,48 @@ class RobotInferenceController:
             )
 
     def process_inference_vision(self, obs_deque):
-        images = []
-        for cam_name in self.config.data.vision.cameras:
-            image = np.stack([x[cam_name] for x in obs_deque])
-            input_image = torch.stack([self.policy.transform(img) for img in image])
-            images.append(
-                input_image.to(self.policy.device, dtype=self.policy.precision)
-            )
+        cams = self.config.data.vision.cameras
+        device = self.policy.device
+        dtype = self.policy.precision
 
-        agent_pos = np.stack([x["state"] for x in obs_deque])
-        nagent_pos = normalize_data(agent_pos, stats=self.policy.stats["state"])
-        nagent_pos = torch.from_numpy(nagent_pos).to(
-            self.policy.device, dtype=self.policy.precision
-        )
+        agent_pos_np = np.stack([x["state"] for x in obs_deque])
+        nagent_pos_np = normalize_data(agent_pos_np, stats=self.policy.stats["state"])
+        nagent_pos = torch.from_numpy(nagent_pos_np).to(device, dtype=dtype)
+
+        if isinstance(self.config.model, Diffusion):
+            encoders = self.policy.ema_nets
+        elif isinstance(self.config.model, RSIMLE):
+            encoders = self.policy.nets
+        else:
+            raise NotImplementedError("Model not supported for inference.")
 
         image_features = []
-        if isinstance(self.config.model, Diffusion):
-            for ix, cam_name in enumerate(self.config.data.vision.cameras):
-
-                with torch.no_grad():
-                    image_feature = self.policy.ema_nets[f"vision_encoder_{cam_name}"](
-                        images[ix]
-                    )
-                image_features.append(image_feature)
-        elif isinstance(self.config.model, RSIMLE):
-            for ix, cam_name in enumerate(self.config.data.vision.cameras):
-                with torch.no_grad():
-                    image_feature = self.policy.nets[f"vision_encoder_{cam_name}"](
-                        images[ix]
-                    )
-                image_features.append(image_feature)
+        with torch.no_grad():
+            for cam_name in cams:
+                image = np.stack([x[cam_name] for x in obs_deque])
+                input_image = torch.stack([self.policy.transform(img) for img in image])
+                feat = encoders[f"vision_encoder_{cam_name}"](input_image)
+                image_features.append(feat)
 
                 # TODO: Clean here
-                model = self.policy.nets[f"vision_encoder_{cam_name}"]
-                with GradCAM(model=model, target_layers=model.layer4) as cam:
-                    model.eval()
-                    img = images[ix][-1].unsqueeze(0)
-                    grayscale_cam = cam(
-                        input_tensor=img, targets=[ClassifierOutputTarget(0)]
-                    )
-                    grayscale_cam = grayscale_cam[0, :]
-                    img = img - img.min()
-                    img = img / img.max()
-                    rr.log(f"/debug/{cam_name}_activation", rr.Image(grayscale_cam).compress())
-                    visualization = show_cam_on_image(
-                        img.squeeze(0).permute(1, 2, 0).cpu().numpy(),
-                        grayscale_cam,
-                        use_rgb=True,
-                    )
-                    rr.log(f"/debug/{cam_name}_overlay", rr.Image(visualization).compress())
-
+                # model = encoders[f"vision_encoder_{cam_name}"]
+                # with GradCAM(model=model, target_layers=[model.layer4]) as cam:
+                #     model.eval()
+                #     img = image[-1].unsqueeze(0)
+                #     grayscale_cam = cam(
+                #         input_tensor=img, targets=[ClassifierOutputTarget(0)]
+                #     )
+                #     grayscale_cam = grayscale_cam[0, :]
+                #     img = img - img.min()
+                #     img = img / img.max()
+                #     rr.log(f"/debug/{cam_name}_activation", rr.Image(grayscale_cam).compress())
+                #     visualization = show_cam_on_image(
+                #         img.squeeze(0).permute(1, 2, 0).cpu().numpy(),
+                #         grayscale_cam,
+                #         use_rgb=True,
+                #     )
+                #     rr.log(f"/debug/{cam_name}_overlay", rr.Image(visualization).compress())
+                #
         obs_features = torch.cat(image_features + [nagent_pos], dim=-1)
 
         obs_cond = obs_features.unsqueeze(0).flatten(start_dim=1)
@@ -190,23 +155,7 @@ class RobotInferenceController:
         return obs_cond
 
     def get_observation(self):
-        s = self.motion.get_robot_state()
-
-        self.gui.step_robot(s.q)
-        X_BE = np.array(s.O_T_EE).reshape(4, 4, order="F")
-
-        rr.log(
-            "/state/O_T_ee",
-            rr.Transform3D(
-                translation=X_BE[:3, 3], mat3x3=X_BE[:3, :3], axis_length=0.1
-            ),
-        )
-
-        rot = utils.matrix_to_rotation_6d(X_BE[:3, :3])
-        t = X_BE[:3, 3]
-        width = self.gripper.width()
-
-        state = np.concat([t, rot, (width,)])
+        state = self.robot.get_state()
 
         images = self.perception_system.cams.get()
 
@@ -214,7 +163,7 @@ class RobotInferenceController:
         for ix, cam_name in enumerate(self.config.data.vision.cameras):
             frames[f"{cam_name}"] = images[ix]["color"]
             self.all_frames[f"{cam_name}"].append(images[ix]["color"])
-            self.gui.log_frame_encoded(images[ix]["color"], cam_name)
+            self.gui.log_frame(images[ix]["color"], cam_name)
 
         if cv2.waitKey(1) & 0xFF == ord("q"):
             self.record_videos()  # Improve here
@@ -227,7 +176,10 @@ class RobotInferenceController:
                 f"saved_evaluation_media/{self.eval_name}/{self.idx}_{cam_name}.mp4"
             )
             out = cv2.VideoWriter(
-                save_path, cv2.VideoWriter_fourcc(*"mp4v"), 10, (640, 480)
+                save_path,
+                cv2.VideoWriter_fourcc(*"mp4v"),  # type: ignore[attr-defined]
+                10,
+                (640, 480),
             )
             for frame in self.all_frames[cam_name]:
                 rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -235,7 +187,6 @@ class RobotInferenceController:
             out.release()
 
     def infer_action(self, obs_deque):
-        # low_dim_state = np.stack([x["state"] for x in obs_deque])
         self.infer_idx += 1
 
         obs_cond = self.process_inference_vision(obs_deque)
@@ -271,7 +222,7 @@ class RobotInferenceController:
                     )
                     trans = debug_denoising[:, :3]
                     rot_6d = debug_denoising[:, 3:9]
-                    rot_mat3x3 = utils.rotation_6d_to_matrix(
+                    rot_mat3x3 = transform_utils.rotation_6d_to_matrix(
                         torch.from_numpy(rot_6d)
                     ).numpy()
                     for i in range(trans.shape[0]):
@@ -305,13 +256,15 @@ class RobotInferenceController:
                     )
                     naction = batched_naction[min_idx]
 
-                    action_debug_pos = action_debug[:,:,:3].reshape(-1,3)
-                    colors = distances.repeat_interleave(self.config.model.pred_horizon,0)
+                    action_debug_pos = action_debug[:, :, :3].reshape(-1, 3)
+                    colors = distances.repeat_interleave(
+                        self.config.model.pred_horizon, 0
+                    )
                     rr.log(
                         "/debug/sampled_trajectories",
                         rr.Points3D(
                             positions=action_debug_pos,
-                            colors=utils.colormap(
+                            colors=viz_utils.colormap(
                                 colors.cpu().numpy(),
                                 colors.min().item(),
                                 colors.max().item(),
@@ -321,8 +274,8 @@ class RobotInferenceController:
                     )
 
                     if self.infer_idx % self.config.model.periodic_length == 0:
-                        index = np.random.uniform(0, 32, size= 1)[0].astype(int)
-                        self.prev_traj = batched_naction[index,:,:].unsqueeze(0)
+                        index = np.random.uniform(0, 32, size=1)[0].astype(int)
+                        self.prev_traj = batched_naction[index, :, :].unsqueeze(0)
 
                     else:
                         self.prev_traj = naction
@@ -353,65 +306,72 @@ class RobotInferenceController:
 
         return {"action": action}
 
-    def stop_motion(self):
-
-        # pose = Affine(self.motion.get_robot_state().O_T_EE)
-        #
-        # waypoint = Waypoint(pose)
-        # self.motion.set_next_waypoints([waypoint])
-        self.gripper.open(True)
-        self.motion.finish()
-
-
-    def close_gripper_if_open(self) -> bool:
-        if self.gripper_open:
-            self.gripper.close()
-            self.gripper_open = False
-            return True
-        return False
-
-    def open_gripper_if_closed(self) -> bool:
-        if not self.gripper_open:
-            self.gripper.open()
-            self.gripper_open = True
-            return True
-        return False
-
-    def log_poses(self, trans, quads):
+    def log_poses(self, trans: NDArray, rots: NDArray, relative: bool = False):
+        """
+        Log action poses to rerun
+        Args:
+            trans (NDArray): Nx3 array of translations
+            rots (NDArray): Nx3x3 array of rotation matrices
+            relative (bool): whether the poses are relative to each other
+        """
         n_actions = len(trans)
+        if relative:
+            p0, r0 = self.robot.pos, self.robot.rot
+            trans, rots = self.transform_action_to_absolute(trans, rots, p0, r0)
         for i in range(n_actions):
             rr.log(
                 f"/action/pose_{i}/transform",
-                rr.Transform3D(translation=trans[i], mat3x3=quads[i], axis_length=0.1),
+                rr.Transform3D(translation=trans[i], mat3x3=rots[i], axis_length=0.1),
             )
+
+    @staticmethod
+    def transform_action_to_absolute(
+        trans: NDArray,
+        rots: NDArray,
+        p0: Optional[NDArray] = None,
+        r0: Optional[NDArray] = None,
+    ) -> tuple[NDArray, NDArray]:
+        """
+        Transform relative actions to absolute actions
+        Args:
+            trans (NDArray): Nx3 array of translations
+            rots (NDArray): Nx3x3 array of rotation matrices
+        Returns:
+            tuple[NDArray, NDArray]: absolute translations and rotations
+        """
+        n_actions = len(trans)
+        current_rot = np.eye(3) if r0 is None else r0
+        current_pos = np.zeros(3) if p0 is None else p0
+        translations = np.empty_like(trans)
+        rotations = np.empty_like(rots)
+        for i in range(n_actions):
+            rel_rot = rots[i]
+            rel_trans = trans[i]
+            rotations[i] = current_rot @ rel_rot
+            translations[i] = current_pos + current_rot @ rel_trans
+            current_rot = rotations[i]
+            current_pos = translations[i]
+        return translations, rotations
 
     def run_experiments(self, episodes):
         for i in range(episodes):
             self.idx = i
-            print(f"Starting episode {i+1}/{episodes}")
+            print(f"Starting episode {i + 1}/{episodes}")
             self.done = False
             time.sleep(0.1)
-            self.move_to_start()
+            self.robot.move_to_start(np.deg2rad([-90, 0, 0, -90, 0, 90, 45]))
 
             input("Press Enter to start the next episode...")
             self.obs_deque.clear()
-            self.start_inference()
+            self.inference_loop()
             self.all_frames = defaultdict(list)
-            print(f"Finished episode {i+1}/{episodes}")
+            print(f"Finished episode {i + 1}/{episodes}")
 
-
-
-    def start_inference(self):
-    
-        current_pose = self.robot.current_pose()
-
-        self.motion = WaypointMotion(
-            [Waypoint(current_pose)], return_when_finished=False
-        )
-        move_async = self.robot.move_async(self.motion)  # noqa: F841
+    def inference_loop(self):
+        self.robot.init_waypoint_motion()
 
         obs_stream = (  # noqa: F841
-            rx.interval(0.1, scheduler=rx.scheduler.NewThreadScheduler())
+            rx.interval(0.1, scheduler=NewThreadScheduler())
             .pipe(ops.map(lambda _: self.get_observation()))
             .subscribe(lambda x: self.obs_deque.append(x))
         )
@@ -435,138 +395,61 @@ class RobotInferenceController:
             out = self.infer_action(obs)
             action = out["action"]
             all_actions = np.concatenate([all_actions, action], axis=0)
-            # Im not proud of this, but currently we only do
-            # either relative or absolute actions, Here we
-            # need to add any fix
 
             print("elapsed time: ", time.time() - start_time)
-            low_level_obs = obs[-1]["state"]
-            low_level_pos = low_level_obs[:3]
-            low_level_orien = low_level_obs[3:9]
 
-            if self.config.data.action_relative:
-                current_pose = utils.pos_rot_to_se3(low_level_pos, low_level_orien)
-                n_trans, n_quads, poses = self.convert_actions(action)
-                r = utils.rotation_6d_to_matrix(action[:, 3:9])
-            else:
-                n_trans, n_quads, poses = self.convert_actions(action)
-                r = utils.rotation_6d_to_matrix(action[:, 3:9])
+            n_trans, n_quads, _ = self.convert_actions(action)
+            r = transform_utils.rotation_6d_to_matrix(action[:, 3:9])
 
             self.log_poses(n_trans, r.numpy())
             progress = action[:, -1:]
             rr.log("/action/gripper", rr.Scalars(action[0, -2].tolist()))
             rr.log("/action/progress", rr.Scalars(action[0, -1].tolist()))
 
-            waypoints = []
-            extra_poses = []
+            action_horizon_len = int(len(action) / 2)
+            relative = self.config.data.action_relative
+            self.robot.set_next_waypoints(
+                n_trans[0:action_horizon_len],
+                n_quads[0:action_horizon_len],
+                relative=relative,
+            )
             for i in range(0, int(len(action) / 2)):
-                trans = n_trans[i]
-                q = n_quads[i]
-                pose = Affine(trans[0], trans[1], trans[2], q[0], q[1], q[2], q[3])
-
-                extra_poses.append(np.array(pose.array()).reshape((4, 4), order="F"))
-
-                waypoints.append(
-                    Waypoint(
-                        Affine(trans[0], trans[1], trans[2], q[0], q[1], q[2], q[3])
-                    )
-                )
-
-                self.motion.set_next_waypoints([Waypoint(pose)])
                 time.sleep(1 / refresh_rate_hz)
                 if action[i][-2] > 0.5:
-                    self.close_gripper_if_open()
+                    self.robot.close_gripper()
                 else:
-                    self.open_gripper_if_closed()
+                    self.robot.open_gripper()
 
             if progress[0] >= 0.95:
-                self.stop_motion()
+                self.robot.stop_motion()
                 obs_stream.dispose()
                 self.record_videos()
                 self.done = True
 
             elapsed_time = time.perf_counter() - infer_start_time
-            rr.log(
-                "/debug/inference_time", rr.Scalars(elapsed_time)
-            )
+            rr.log("/debug/inference_time", rr.Scalars(elapsed_time))
             remaining_time = target_dt - elapsed_time
             if remaining_time > 0:
                 time.sleep(remaining_time)
 
             if (time.time() - start_time) > self.timeout:
                 print("Timeout reached, ending inference.")
-                self.stop_motion()
+                self.robot.stop_motion()
                 obs_stream.dispose()
                 self.record_videos()
                 self.done = True
 
-        move_async.join()
-
-
-    def relative_to_absolute(
-        self, action: np.ndarray, current_pose: sm.SE3
-    ) -> tuple[list[np.ndarray], list[np.ndarray], list[sm.SE3]]:
-        n = action.shape[0]
-        t = action[:, :3]
-        rot = action[:, 3:-2]
-
-        rel_poses = utils.pos_rot_to_se3(torch.from_numpy(t), rot)
-        trans = []
-        quads = []
-        poses = [current_pose]
-        for i in range(n):
-            poses.append(poses[-1] * rel_poses[i])
-
-            trans.append(poses[-1].t)
-            quads.append(smb.r2q(poses[-1].A[:3, :3], order="sxyz"))
-        return trans, quads, poses
+        assert self.robot.move_async is not None
+        self.robot.move_async.join()
 
     def convert_actions(
         self, action: np.ndarray
-    ) -> tuple[list[np.ndarray], list[np.ndarray], list[sm.SE3]]:
-        global idx_plot
+    ) -> tuple[list[np.ndarray], np.ndarray, list[sm.SE3]]:
         t = action[:, :3]
         rot = action[:, 3:-2]
 
-        poses = utils.pos_rot_to_se3(torch.from_numpy(t), rot)
+        poses = transform_utils.pos_rot_to_se3(torch.from_numpy(t), rot)
         trans = t.tolist()
-        quads = utils.rotation_6d_to_quat(torch.from_numpy(rot)).numpy()
+        quads = transform_utils.rotation_6d_to_quat(torch.from_numpy(rot)).numpy()
 
         return trans, quads, poses
-
-
-if __name__ == "__main__":
-    from rs_imle_policy.configs.train_config import LoaderConfig
-    import re
-
-    import tyro
-    from InquirerPy import inquirer
-
-    import subprocess
-    args = tyro.cli(LoaderConfig)
-
-
-    if args.exp_name is not None:
-        exp_name = args.exp_name
-    else:
-        exp_name = inquirer.text("Enter the experiment name: ").execute()
-        exp_name = re.sub(r"\s+", "_", exp_name.strip())
-
-    config = tyro.extras.from_yaml(ExperimentConfig, open(args.path / "config.yaml"))
-    config.epoch = args.epoch
-    if isinstance(config.model, RSIMLE):
-        config.model.traj_consistency = True
-
-    rr.init("Robot Inference ", recording_id=exp_name)
-    os.makedirs(f"saved_evaluation_media/{exp_name}", exist_ok=True)
-    rr.save(f"saved_evaluation_media/{exp_name}/rerun_recording.rrd")
-    subprocess.Popen(
-        ["rerun", f"saved_evaluation_media/{exp_name}/rerun_recording.rrd"]
-    )
-
-    controller = RobotInferenceController(
-        config, eval_name=exp_name, timeout=args.timeout
-    )
-
-    controller.run_experiments(10)
-    controller.perception_system.stop()
