@@ -15,8 +15,8 @@ import torchvision
 import h5py
 import pickle as pkl
 
-import rs_imle_policy.utilities as utils
 import spatialmath as sm
+from rs_imle_policy.utils import transforms as transform_utils
 from rs_imle_policy.configs.train_config import VisionConfig
 from collections import defaultdict
 
@@ -145,7 +145,10 @@ class PolicyDataset(Dataset):
                 X_BE_next = X_BE_current[1:]
                 X_BE_next.append(X_BE_current[-1])
             else:
-                X_BE_next = [(self.robot.fkine(np.array(q))).A for q in df["gello_q"]]
+                X_BE_next = [(self.robot.fkine(np.array(q))).A for q in df["gello_q"]][
+                    1:
+                ]
+                X_BE_next.append(X_BE_next[-1])
 
             relative_transform = self.get_relative_transform(X_BE_current, X_BE_next)
 
@@ -154,11 +157,13 @@ class PolicyDataset(Dataset):
             gripper_action = df["gripper_action"].tolist()
             gripper_action = np.array(gripper_action).reshape(-1, 1)
 
-            X_BE_current_pos, X_BE_current_orien = utils.extract_robot_pos_orien(
-                X_BE_current
+            X_BE_current_pos, X_BE_current_orien = (
+                transform_utils.extract_robot_pos_orien(X_BE_current)
             )
-            X_BE_next_pos, X_BE_next_orien = utils.extract_robot_pos_orien(X_BE_next)
-            relative_pos, relative_orien = utils.extract_robot_pos_orien(
+            X_BE_next_pos, X_BE_next_orien = transform_utils.extract_robot_pos_orien(
+                X_BE_next
+            )
+            relative_pos, relative_orien = transform_utils.extract_robot_pos_orien(
                 relative_transform
             )
 
