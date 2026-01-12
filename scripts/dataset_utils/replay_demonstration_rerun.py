@@ -66,8 +66,6 @@ for episode in rlds:
             relative_pos, relative_orien, name="debug/robot_current_pose/relative_pose"
         )
 
-        breakpoint()
-
         progress = unnormalize_data(ep_data["progress"][idx], dataset.stats["progress"])
 
         gui.step_robot(robot_q, gello_q)

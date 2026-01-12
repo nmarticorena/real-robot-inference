@@ -69,7 +69,6 @@ class ReRunRobot:
             return vertex_colour
         vertex_colour = np.atleast_2d(vertex_colour)
         vertex_colour[:, -1] = int(self.alpha * 255)
-        breakpoint()
         return vertex_colour
 
     def _load_meshes(self) -> None:
