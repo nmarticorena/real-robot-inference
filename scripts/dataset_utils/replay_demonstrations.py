@@ -10,9 +10,8 @@ import tyro
 
 args = tyro.cli(LoaderConfig)
 
-vision_config = tyro.extras.from_yaml(
-    VisionConfig, open(args.path / "vision_config.yml")
-)
+with open(args.dataset_path / "vision_config.yml", "r") as f:
+    vision_config = tyro.extras.from_yaml(VisionConfig, f)
 
 dataset = PolicyDataset(
     args.path,
@@ -54,8 +53,8 @@ for episode in rlds:
         )
         t = unnormalize_data(ep_data["action_pos"][idx], dataset.stats["action_pos"])
 
-        # pose = utils.pos_rot_to_se3(t, orien)
-        # action_pos.T = pose
+        pose = utils.pos_rot_to_se3(t, orien)
+        action_pos.T = pose
 
         orien = unnormalize_data(
             ep_data["robot_orien"][idx], dataset.stats["robot_orien"]
