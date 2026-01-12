@@ -1,28 +1,53 @@
-from rs_imle_policy.network import (
-    get_resnet,
-    replace_bn_with_gn,
-    DiffusionConditionalUnet1D,
-    GeneratorConditionalUnet1D,
-)
+"""Policy module for robot manipulation learning.
+
+This module provides the Policy class which manages model initialization,
+training setup, and inference for both diffusion-based and RS-IMLE policies.
+"""
+
+import copy
+import os
+
+import numpy as np
 import torch
 import torch.nn as nn
-from diffusers.training_utils import EMAModel
-from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
-from diffusers.optimization import get_scheduler
-from rs_imle_policy.dataset import PolicyDataset
-import os
-import copy
-import numpy as np
 import torchvision.transforms as transforms
-from rs_imle_policy.configs.train_config import (
-    ExperimentConfig,
-    Diffusion,
-    RSIMLE,
+from diffusers.optimization import get_scheduler
+from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
+from diffusers.training_utils import EMAModel
+
+from rs_imle_policy.configs.train_config import Diffusion, ExperimentConfig, RSIMLE
+from rs_imle_policy.dataset import PolicyDataset
+from rs_imle_policy.network import (
+    DiffusionConditionalUnet1D,
+    GeneratorConditionalUnet1D,
+    get_resnet,
+    replace_bn_with_gn,
 )
 
 
 class Policy:
+    """Manages policy model initialization, training, and inference.
+    
+    Supports both diffusion-based policies and RS-IMLE generative policies
+    for robot manipulation tasks.
+    
+    Attributes:
+        config: Experiment configuration
+        device: Compute device (CPU or CUDA)
+        precision: Model precision (float32 or float16)
+        noise_scheduler: Diffusion scheduler (for diffusion models only)
+        nets: Model networks
+        ema: Exponential moving average model
+        stats: Data normalization statistics
+        transform: Image preprocessing transforms
+    """
+    
     def __init__(self, config: ExperimentConfig):
+        """Initialize the policy.
+        
+        Args:
+            config: Experiment configuration object
+        """
         self.config = config
 
         if isinstance(self.config.model, Diffusion):
@@ -31,7 +56,7 @@ class Policy:
                 beta_schedule=self.config.model.beta_schedule,
                 clip_sample=self.config.model.clip_sample,
                 prediction_type=self.config.model.prediction_type,
-            )  # TODO: Check if I can do *kwargs here
+            )
         else:
             self.noise_scheduler = None
 
@@ -47,7 +72,7 @@ class Policy:
                 action_keys=self.config.data.action_keys,
                 vision_config=self.config.data.vision,
                 use_next_state=self.config.data.use_next_state,
-            )  # TODO: Check why does we initialize this twice
+            )
             self.dataloader = torch.utils.data.DataLoader(
                 self.dataset,
                 batch_size=self.config.training_params.batch_size,
@@ -100,13 +125,14 @@ class Policy:
             print("Inference Mode.")
 
     def load_weights(self):
+        """Load pretrained model weights from checkpoint."""
         if self.config.epoch is None:
             epoch_str = "last"
         else:
             epoch_str = f"{self.config.epoch:04d}"
         print(f"Loading pretrained weights from epoch {epoch_str}...")
         if isinstance(self.config.model, Diffusion):
-            print("Loading pretrained weights for diffusion")
+            print("Loading pretrained weights for diffusion model")
             self.ema_nets = copy.deepcopy(self.nets)
 
             fpath_ema = os.path.join(self.folder, f"ema_net_epoch_{epoch_str}.pth")
@@ -120,13 +146,18 @@ class Policy:
             self.ema = EMAModel(parameters=self.ema_nets.parameters(), power=0.75)
 
         elif isinstance(self.config.model, RSIMLE):
-            print("Loading pretrained weights for rs_imle")
+            print("Loading pretrained weights for RS-IMLE model")
             fpath = os.path.join(self.folder, f"net_epoch_{epoch_str}.pth")
             self.nets.load_state_dict(torch.load(fpath, map_location=self.device))
 
         print("Pretrained weights loaded.")
 
-    def create_networks(self):
+    def create_networks(self) -> nn.ModuleDict:
+        """Create and initialize neural networks for the policy.
+        
+        Returns:
+            ModuleDict containing vision encoders and policy network
+        """
         cameras = self.config.data.vision.cameras
         vision_encoders = {
             f"vision_encoder_{camera}": replace_bn_with_gn(get_resnet("resnet18"))

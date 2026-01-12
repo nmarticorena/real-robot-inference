@@ -1,47 +1,93 @@
+"""Dataset utilities for robot policy learning.
+
+This module provides dataset classes and data normalization utilities
+for training robot manipulation policies from demonstrations.
+"""
+
+import json
 import os
 import pathlib
-import json
+import pickle as pkl
+import time
+from collections import defaultdict
+from typing import Callable, List, Optional
+
+import h5py
+import matplotlib.pyplot as plt
 import numpy as np
-from numpy.typing import NDArray
-import torch
-from torch.utils.data import Dataset
-from typing import Optional, Callable, List
 import pandas as pd
 import roboticstoolbox as rtb
-import time
-import torchvision.transforms as transforms
-import matplotlib.pyplot as plt
-import torchvision
-import h5py
-import pickle as pkl
-
 import spatialmath as sm
-from rs_imle_policy.utils import transforms as transform_utils
+import torch
+import torchvision
+import torchvision.transforms as transforms
+from numpy.typing import NDArray
+from torch.utils.data import Dataset
+
 from rs_imle_policy.configs.train_config import VisionConfig
-from collections import defaultdict
+from rs_imle_policy.utils import transforms as transform_utils
 
 
-# Helper function to get normalization stats
-def get_data_stats(data):
+def get_data_stats(data: NDArray) -> dict:
+    """Compute normalization statistics for data.
+    
+    Args:
+        data: Input data array
+        
+    Returns:
+        Dictionary with 'min' and 'max' statistics
+    """
     stats = {"min": np.min(data, axis=0), "max": np.max(data, axis=0)}
     return stats
 
 
-# Normalize data to [-1, 1]
-def normalize_data(data, stats):
+def normalize_data(data: NDArray, stats: dict) -> NDArray:
+    """Normalize data to [-1, 1] range.
+    
+    Args:
+        data: Input data array
+        stats: Dictionary containing 'min' and 'max' statistics
+        
+    Returns:
+        Normalized data in range [-1, 1]
+    """
     ndata = (data - stats["min"]) / (stats["max"] - stats["min"])  # Normalize to [0,1]
     ndata = ndata * 2 - 1  # Normalize to [-1,1]
     return ndata
 
 
-# Unnormalize data
-def unnormalize_data(ndata, stats):
+def unnormalize_data(ndata: NDArray, stats: dict) -> NDArray:
+    """Unnormalize data from [-1, 1] range to original range.
+    
+    Args:
+        ndata: Normalized data in range [-1, 1]
+        stats: Dictionary containing 'min' and 'max' statistics
+        
+    Returns:
+        Data in original range
+    """
     ndata = (ndata + 1) / 2
     data = ndata * (stats["max"] - stats["min"]) + stats["min"]
     return data
 
 
 class PolicyDataset(Dataset):
+    """PyTorch dataset for robot manipulation demonstrations.
+    
+    This dataset loads and preprocesses demonstration data including robot states,
+    actions, and multi-camera observations for training imitation learning policies.
+    
+    Attributes:
+        dataset_path: Path to the dataset directory
+        pred_horizon: Number of future actions to predict
+        obs_horizon: Number of historical observations to use
+        action_horizon: Number of actions to execute
+        vision_config: Configuration for camera setup
+        rlds: Dictionary containing episode data
+        stats: Normalization statistics for each data key
+        indices: Sample indices for dataset access
+    """
+    
     def __init__(
         self,
         dataset_path: pathlib.Path,
@@ -55,6 +101,20 @@ class PolicyDataset(Dataset):
         visualize: bool = False,
         use_next_state: bool = True,
     ):
+        """Initialize the policy dataset.
+        
+        Args:
+            dataset_path: Path to dataset directory
+            pred_horizon: Number of future actions to predict
+            obs_horizon: Number of historical observations
+            action_horizon: Number of actions to execute
+            transform: Optional image transform
+            low_dim_obs_keys: Keys for low-dimensional observations
+            action_keys: Keys for action data
+            vision_config: Camera configuration
+            visualize: If True, skip saving stats (for visualization only)
+            use_next_state: If True, use next robot state as action target
+        """
         self.dataset_path = dataset_path
         self.pred_horizon = pred_horizon
         self.obs_horizon = obs_horizon
@@ -72,14 +132,12 @@ class PolicyDataset(Dataset):
 
         # Load all episodes and create sample indices
         self.rlds = self.create_rlds_dataset()
-        # Store video paths
-        # self.video_paths = self.get_video_paths()
         # Compute statistics for normalization
         self.stats = defaultdict(lambda: dict)
         self.compute_normalization_stats()
 
         if not visualize:
-            # save stats
+            # Save stats
             with open(os.path.join(self.dataset_path, "stats.pkl"), "wb") as f:
                 pkl.dump(dict(self.stats), f)
 
@@ -112,7 +170,16 @@ class PolicyDataset(Dataset):
 
     def get_relative_transform(
         self, current_pose: List[NDArray], next_pose: List[NDArray]
-    ):
+    ) -> List[sm.SE3]:
+        """Compute relative transformation between consecutive poses.
+        
+        Args:
+            current_pose: List of current pose matrices
+            next_pose: List of next pose matrices
+            
+        Returns:
+            List of relative transformations as SE3 objects
+        """
         current_pose_sm = [sm.SE3(pose) for pose in current_pose]
         next_pose_sm = [sm.SE3(pose) for pose in next_pose]
 
@@ -121,7 +188,12 @@ class PolicyDataset(Dataset):
         ]
         return relative_transform
 
-    def create_rlds_dataset(self):
+    def create_rlds_dataset(self) -> dict:
+        """Load and process demonstration episodes into RLDS format.
+        
+        Returns:
+            Dictionary mapping episode indices to episode data
+        """
         rlds = {}
         episodes = sorted(
             os.listdir(os.path.join(self.dataset_path, "episodes")),
@@ -197,14 +269,26 @@ class PolicyDataset(Dataset):
         return rlds
 
     def normalize_rlds(self):
+        """Apply normalization to all data in the RLDS dataset."""
         for episode in self.rlds.keys():
             for key in self.rlds[episode].keys():
                 self.rlds[episode][key] = normalize_data(
                     np.array(self.rlds[episode][key]), self.stats[key]
                 )
-        return
 
-    def create_sample_indices(self, rlds_dataset, sequence_length=16):
+    def create_sample_indices(
+        self, rlds_dataset: dict, sequence_length: int = 16
+    ) -> NDArray:
+        """Create valid sample indices for the dataset.
+        
+        Args:
+            rlds_dataset: Dictionary of episode data
+            sequence_length: Length of sequences to sample
+            
+        Returns:
+            Array of sample indices with shape (N, 3) containing
+            [episode_idx, start_idx, end_idx]
+        """
         indices = []
         for episode in rlds_dataset.keys():
             key = next(iter(rlds_dataset[episode]))
@@ -219,6 +303,7 @@ class PolicyDataset(Dataset):
         return indices
 
     def compute_normalization_stats(self):
+        """Compute normalization statistics for all data keys."""
         def get_data(key: str):
             data = np.concatenate(
                 [np.array(self.rlds[episode][key]) for episode in self.rlds.keys()],
@@ -229,7 +314,19 @@ class PolicyDataset(Dataset):
         for keys in self.rlds[0].keys():
             get_data(keys)
 
-    def sample_sequence(self, episode, buffer_start_idx, buffer_end_idx):
+    def sample_sequence(
+        self, episode: int, buffer_start_idx: int, buffer_end_idx: int
+    ) -> dict:
+        """Sample a sequence from an episode.
+        
+        Args:
+            episode: Episode index
+            buffer_start_idx: Start index of the sequence
+            buffer_end_idx: End index of the sequence
+            
+        Returns:
+            Dictionary containing state, action, and frame data
+        """
         frames = self.read_video_frames(episode, buffer_start_idx, buffer_end_idx)
 
         robot_state = self.rlds[episode]["state"][buffer_start_idx:buffer_end_idx]
@@ -238,7 +335,17 @@ class PolicyDataset(Dataset):
         seq = {"state": robot_state, "action": robot_action, "frames": frames}
         return seq
 
-    def read_video_frames(self, episode, start_frame, end_frame):
+    def read_video_frames(self, episode: int, start_frame: int, end_frame: int) -> dict:
+        """Read video frames from cached HDF5 file.
+        
+        Args:
+            episode: Episode index
+            start_frame: Start frame index
+            end_frame: End frame index (not used, reads obs_horizon frames from start)
+            
+        Returns:
+            Dictionary mapping camera names to frame arrays
+        """
         frames = {}
         video = self.cached_dataset[str(episode)]
         for key in self.vision_config.cameras:
@@ -247,13 +354,31 @@ class PolicyDataset(Dataset):
 
         return frames
 
-    def __len__(self):
+    def __len__(self) -> int:
+        """Get the number of samples in the dataset.
+        
+        Returns:
+            Number of samples
+        """
         return len(self.indices)
 
-    def linear_progress(self, length):
+    def linear_progress(self, length: int) -> NDArray:
+        """Generate linear progress values from 0 to 1.
+        
+        Args:
+            length: Number of progress values to generate
+            
+        Returns:
+            Array of progress values linearly spaced from 0 to 1
+        """
         return np.linspace(0, 1, length)
 
-    def visualize_images_in_row(self, tensor):
+    def visualize_images_in_row(self, tensor: torch.Tensor):
+        """Visualize a batch of images in a single row.
+        
+        Args:
+            tensor: Image tensor of shape (16, 3, 216, 288)
+        """
         # Ensure the input tensor is in the right shape
         assert tensor.shape == (16, 3, 216, 288), (
             "Tensor should have shape (16, 3, 216, 288)"
@@ -271,7 +396,15 @@ class PolicyDataset(Dataset):
         plt.axis("off")  # Hide axis
         plt.show()
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx: int) -> dict:
+        """Get a sample from the dataset.
+        
+        Args:
+            idx: Sample index
+            
+        Returns:
+            Dictionary containing 'state', 'action', and camera frame tensors
+        """
         episode, buffer_start_idx, buffer_end_idx = self.indices[idx]
         seq = self.sample_sequence(episode, buffer_start_idx, buffer_end_idx)
 
