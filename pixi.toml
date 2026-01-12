@@ -3,7 +3,7 @@ authors = [""]
 channels = ["conda-forge"]
 name = "real-robot-inference"
 platforms = ["linux-64"]
-version = "0.1.0"
+version = "1.0.0"
 
 
 [tasks.gripper_home]
@@ -103,7 +103,6 @@ spatialmath-python = {git = "https://github.com/nmarticorena/spatialmath-python.
 frankx = {git = "https://github.com/nmarticorena/frankx.git", rev = "legacy_version"}
 atomics = ">=1.0.3, <2"
 panda-python = ">=0.8.1, <0.9"
-franky-control = {git = "https://github.com/TimSchneider42/franky.git"}
 
 [activation.env]
 PANDA_IP = "172.16.0.2"
