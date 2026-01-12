@@ -100,7 +100,6 @@ def train(
                 obs_cond = obs_features.flatten(start_dim=1)
 
                 if isinstance(args.model, Diffusion):
-                    print("Using diffusion loss")
                     noise = torch.randn(naction.shape, device=device)
                     timesteps = torch.randint(
                         0,

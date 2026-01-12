@@ -29,7 +29,6 @@ class ReRunRobot:
                 self.name + "/" + link.name,
                 rr.Transform3D(translation=O_T_ix[:3, 3], mat3x3=O_T_ix[:3, :3]),
             )
-        pass
 
     def log_pose(
         self, position: NDArray, quaternion: NDArray, name: str = "pose"
@@ -46,16 +45,6 @@ class ReRunRobot:
                 translation=position, rotation=rr.Quaternion(xyzw=quad), axis_length=0.1
             ),
         )
-
-    # def log_poses(self, positions:NDArray, quaternions:NDArray, name: str = "poses") -> None:
-    #     """
-    #     Log multiple 3D poses to rerun
-    #     positions: Nx3 array of [x, y, z]
-    #     quaternions: Nx4 array of [w, x, y, z]
-    #     """
-    #     transforms = []
-    #     for pos, quat in zip(positions, quaternions):
-    #         quad = [quat[1], quat[2], quat[3], quat[0]]
 
     def log_frame(self, image, camera_name):
         """

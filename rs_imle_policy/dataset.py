@@ -158,13 +158,13 @@ class PolicyDataset(Dataset):
             gripper_action = np.array(gripper_action).reshape(-1, 1)
 
             X_BE_current_pos, X_BE_current_orien = (
-                transform_utils.extract_robot_pos_orien(X_BE_current)
+                transform_utils.extract_robot_pos_orien(np.array(X_BE_current))
             )
             X_BE_next_pos, X_BE_next_orien = transform_utils.extract_robot_pos_orien(
-                X_BE_next
+                np.array(X_BE_next)
             )
             relative_pos, relative_orien = transform_utils.extract_robot_pos_orien(
-                relative_transform
+                np.array(relative_transform)
             )
 
             progress = self.linear_progress(len(df)).reshape(-1, 1)

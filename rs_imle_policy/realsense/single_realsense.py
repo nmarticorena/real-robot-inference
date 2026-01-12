@@ -345,9 +345,7 @@ class SingleRealsense(mp.Process):
             raise RuntimeError("video_path too long.")
 
         video_path = str(video_path)
-        #     start_time = command['recording_start_time']
-        #     if start_time < 0:
-        #         start_time = None
+
         if self.color_video_recorder:
             self.color_video_recorder.start(video_path)
         if self.depth_video_recorder:
@@ -572,7 +570,9 @@ class SingleRealsense(mp.Process):
                         try:
                             self.ring_buffer.put(put_data, wait=False)
                         except TimeoutError as e:
-                            print(f"[SingleRealsense {self.serial_number}] dumping data. - {e}")
+                            print(
+                                f"[SingleRealsense {self.serial_number}] dumping data. - {e}"
+                            )
                 else:
                     step_idx = int((receive_time - put_start_time) * self.put_fps)
                     put_data["step_idx"] = step_idx
@@ -580,8 +580,9 @@ class SingleRealsense(mp.Process):
                     try:
                         self.ring_buffer.put(put_data, wait=False)
                     except TimeoutError as e:
-                        print(f"[SingleRealsense {self.serial_number}] dumping data. - {e}")
-
+                        print(
+                            f"[SingleRealsense {self.serial_number}] dumping data. - {e}"
+                        )
 
                 # signal ready
                 if iter_idx == 0:
@@ -643,10 +644,11 @@ class SingleRealsense(mp.Process):
                                 sensor.set_option(option, value)
                                 sensor_setup = True
                             except RuntimeError as e:
-                                print(f"[SingleRealsense {self.serial_number}] Failed to set option {option} to {value}: {e}")
+                                print(
+                                    f"[SingleRealsense {self.serial_number}] Failed to set option {option} to {value}: {e}"
+                                )
                                 print("Retrying after 0.1s...")
                                 time.sleep(0.1)
-                            
 
                         # print('auto', sensor.get_option(rs.option.enable_auto_exposure))
                         # print('exposure', sensor.get_option(rs.option.exposure))
@@ -659,9 +661,6 @@ class SingleRealsense(mp.Process):
                     elif cmd == Command.START_RECORDING.value:
                         put_idx = None
                         video_path = str(command["video_path"])
-                        #     start_time = command['recording_start_time']
-                        #     if start_time < 0:
-                        #         start_time = None
                         if self.color_video_recorder:
                             self.color_video_recorder.start(video_path)
                         if self.depth_video_recorder:
