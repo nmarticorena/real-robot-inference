@@ -280,9 +280,6 @@ class RobotInferenceController:
                     else:
                         self.prev_traj = naction
 
-                    # For debugging
-                    trans = action_debug[:, :3]
-
                 else:
                     noise = torch.randn(
                         (1, self.config.model.pred_horizon, self.config.action_shape),
