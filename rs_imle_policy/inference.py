@@ -1,266 +1,452 @@
-from typing import Tuple, Sequence, Dict, Union, Optional, Callable
+from collections import defaultdict
+from typing import Optional
+from numpy.typing import NDArray
+
+# from pytorch_grad_cam import GradCAM
+# from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
+# from pytorch_grad_cam.utils.image import show_cam_on_image
+import roboticstoolbox as rtb
+import rerun as rr
+
+import spatialmath as sm
 import numpy as np
-import math
 import torch
-import torch.nn as nn
-import torchvision
 import collections
-from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
-from diffusers.training_utils import EMAModel
-from diffusers.optimization import get_scheduler
-from tqdm.auto import tqdm
 import cv2
 import os
-# env import
+
 import time
 
+
+import rs_imle_policy.utils.viz as viz_utils
+import rs_imle_policy.utils.transforms as transform_utils
+from rs_imle_policy.visualizer.rerun_tools import ReRunRobot
+from rs_imle_policy.configs.train_config import (
+    ExperimentConfig,
+    VisionConfig,
+    Diffusion,
+    RSIMLE,
+)
 from rs_imle_policy.policy import Policy
 from rs_imle_policy.dataset import normalize_data, unnormalize_data
-
-import numpy as np
-import time
-import collections
-import reactivex as rx
-from reactivex import operators as ops
-
-# from diffrobot.robot.robot import Robot, to_affine, matrix_to_pos_orn
-from diffrobot.robot.robot import to_affine, matrix_to_pos_orn
-from frankx import Robot, Waypoint, WaypointMotion, JointMotion, Affine, LinearMotion, Kinematics
-
+from rs_imle_policy.robot import FrankxRobot
 from rs_imle_policy.realsense.multi_realsense import MultiRealsense
 
-import matplotlib.pyplot as plt
-
-import pdb
+import reactivex as rx
+from reactivex.scheduler import NewThreadScheduler
+from reactivex import operators as ops
 
 
 class PerceptionSystem:
-    def __init__(self):
+    def __init__(self, vision_config: VisionConfig):
+        serial_numbers = [cam.serial_number for cam in vision_config.cameras_params]
         self.cams = MultiRealsense(
-            serial_numbers=['123622270136', # wrist
-                            '036422070913',
-                            '035122250388'], # side
-            resolution=(640,480),
-            enable_depth=False, 
+            serial_numbers=serial_numbers,
+            resolution=vision_config.cameras_params[0].resolution,
+            record_fps=vision_config.cameras_params[0].frame_rate,
+            depth_resolution=vision_config.cameras_params[0].depth_resolution,
+            enable_depth=vision_config.cameras_params[0].depth_enabled,
         )
+        self.cams_config = vision_config
+
     def start(self):
+        for cam_params in self.cams_config.cameras_params:
+            self.cams.cameras[cam_params.serial_number].set_exposure(
+                exposure=cam_params.exposure, gain=cam_params.gain
+            )
         self.cams.start()
-        self.cams.cameras['123622270136'].set_exposure(exposure=10000.0, gain=16) # d405
-        self.cams.cameras['036422070913'].set_exposure(exposure=130.00, gain=13) #d435
-        self.cams.cameras['035122250388'].set_exposure(exposure=70.00, gain=70) #d435
-   
+
     def stop(self):
         self.cams.stop()
 
 
 class RobotInferenceController:
-    def __init__(self, eval_name, idx):
-        
+    def __init__(self, config: ExperimentConfig, eval_name: str, timeout: int):
+        self.infer_idx = 0
+        self.last_called_obs = time.time()
         self.seed(42)
-        self.robot = self.create_robot()
-        self.perception_system = PerceptionSystem()
+        self.config = config
+        self.config.training = False
+        self.robot = FrankxRobot()
+        self.robot.move_to_start(np.deg2rad([-90, 0, 0, -90, 0, 90, 45]))
+        self.timeout = timeout
+
+        rtb_panda = rtb.models.Panda()
+        self.gui = ReRunRobot(rtb_panda, "panda")
+
+        self.perception_system = PerceptionSystem(config.data.vision)
         self.perception_system.start()
         self.setup_diffusion_policy()
-        self.move_to_start()
 
         self.eval_name = eval_name
-        self.all_frames = []
+        self.all_frames = defaultdict(list)
         self.done = False
-        self.idx = str(idx)
+        self.idx = 0
 
-        #create folder to save images
+        # create folder to save images
         os.makedirs(f"saved_evaluation_media/{self.eval_name}", exist_ok=True)
 
-    
     def seed(self, seed):
         torch.manual_seed(seed)
         np.random.seed(seed)
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
 
-
-    def move_to_start(self):
-        # self.robot.move(JointMotion([-1.9953644495495173, -0.07019201069593659, 0.051291523464672376, -2.4943418327817803, -0.042134962130810624, 2.385776886145273, 0.35092161391247345]))
-        self.robot.move(JointMotion([-1.4257584505685634, -0.302815655026201, 0.05126683842989545, -2.7415479229025443, 0.011030055865001531, 2.3881221201502796, 0.8777110836404692]))
-
-
-    def create_robot(self, ip:str = "172.16.0.2", dynamic_rel: float=0.4): #0.4
-        # panda = Robot(ip)
-        panda = Robot(ip, repeat_on_error=True, dynamic_rel=dynamic_rel)
-        panda.recover_from_errors()
-        panda.accel_rel = 0.1
-        panda.jerk_rel = 0.01
-        return panda
-
     def setup_diffusion_policy(self):
         torch.cuda.empty_cache()
-        self.policy = Policy(config_file='vision_config',
-                        saved_run_name=None, 
-                        mode='infer')
+        self.policy = Policy(self.config)
 
-        self.obs_horizon = self.policy.params.obs_horizon
-        self.obs_deque = collections.deque(maxlen=self.policy.params.obs_horizon)
+        self.obs_horizon = self.config.model.obs_horizon
+        self.obs_deque = collections.deque(maxlen=self.config.model.obs_horizon)
 
+        if isinstance(self.config.model, RSIMLE):
+            self.prev_traj = torch.randn(
+                (1, self.config.model.pred_horizon, self.config.action_shape),
+                device=self.policy.device,
+            )
 
     def process_inference_vision(self, obs_deque):
-        image_side = np.stack([x['image_side'] for x in obs_deque])
-        image_wrist = np.stack([x['image_wrist'] for x in obs_deque])
-        agent_pos = np.stack([x['agent_pos'] for x in obs_deque])
+        cams = self.config.data.vision.cameras
+        device = self.policy.device
+        dtype = self.policy.precision
 
-        nagent_pos = normalize_data(agent_pos, stats=self.policy.stats['agent_pos'])
+        agent_pos_np = np.stack([x["state"] for x in obs_deque])
+        nagent_pos_np = normalize_data(agent_pos_np, stats=self.policy.stats["state"])
+        nagent_pos = torch.from_numpy(nagent_pos_np).to(device, dtype=dtype)
 
-        nimage_side = torch.stack([self.policy.transform(img) for img in image_side])
-        nimage_wrist = torch.stack([self.policy.transform(img) for img in image_wrist])
+        if isinstance(self.config.model, Diffusion):
+            encoders = self.policy.ema_nets
+        elif isinstance(self.config.model, RSIMLE):
+            encoders = self.policy.nets
+        else:
+            raise NotImplementedError("Model not supported for inference.")
 
-        nagent_pos = torch.from_numpy(nagent_pos).to(self.policy.device, dtype=self.policy.precision)
-        nimage_side = nimage_side.to(self.policy.device, dtype=self.policy.precision)
-        nimage_wrist = nimage_wrist.to(self.policy.device, dtype=self.policy.precision)
+        image_features = []
+        with torch.no_grad():
+            for cam_name in cams:
+                image = np.stack([x[cam_name] for x in obs_deque])
+                input_image = torch.stack([self.policy.transform(img) for img in image])
+                feat = encoders[f"vision_encoder_{cam_name}"](input_image)
+                image_features.append(feat)
 
-        if self.policy.params.method == 'diffusion':
-            image_features_side = self.policy.ema_nets['vision_encoder_side'](nimage_side)
-            image_features_wrist = self.policy.ema_nets['vision_encoder_wrist'](nimage_wrist)
-        elif self.policy.params.method == 'rs_imle':
-            image_features_side = self.policy.nets['vision_encoder_side'](nimage_side)
-            image_features_wrist = self.policy.nets['vision_encoder_wrist'](nimage_wrist)
+                # TODO: Clean here
+                # model = encoders[f"vision_encoder_{cam_name}"]
+                # with GradCAM(model=model, target_layers=[model.layer4]) as cam:
+                #     model.eval()
+                #     img = image[-1].unsqueeze(0)
+                #     grayscale_cam = cam(
+                #         input_tensor=img, targets=[ClassifierOutputTarget(0)]
+                #     )
+                #     grayscale_cam = grayscale_cam[0, :]
+                #     img = img - img.min()
+                #     img = img / img.max()
+                #     rr.log(f"/debug/{cam_name}_activation", rr.Image(grayscale_cam).compress())
+                #     visualization = show_cam_on_image(
+                #         img.squeeze(0).permute(1, 2, 0).cpu().numpy(),
+                #         grayscale_cam,
+                #         use_rgb=True,
+                #     )
+                #     rr.log(f"/debug/{cam_name}_overlay", rr.Image(visualization).compress())
+                #
+        obs_features = torch.cat(image_features + [nagent_pos], dim=-1)
 
-        obs_features = torch.cat([image_features_side, image_features_wrist, nagent_pos], dim=-1)                
         obs_cond = obs_features.unsqueeze(0).flatten(start_dim=1)
-        
+
         return obs_cond
-    
-    
+
     def get_observation(self):
-        # s = self.robot.get_state()
-        s = self.motion.get_robot_state()
-        # s = self.robot.read_once()
-        X_BE = np.array(s.O_T_EE).reshape(4,4).T
+        state = self.robot.get_state()
 
         images = self.perception_system.cams.get()
-        images_wrist = images[0]['color']
-        images_side = images[1]['color']
-        images_top = images[2]['color']
 
-        # save images_top
-        # plt.imsave("images_top.png", images_top)
+        frames = {}
+        for ix, cam_name in enumerate(self.config.data.vision.cameras):
+            frames[f"{cam_name}"] = images[ix]["color"]
+            self.all_frames[f"{cam_name}"].append(images[ix]["color"])
+            self.gui.log_frame(images[ix]["color"], cam_name)
 
-        self.all_frames.append(images_top)
+        if cv2.waitKey(1) & 0xFF == ord("q"):
+            self.record_videos()  # Improve here
 
-        cv2.imshow('image', images_top)
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            # write all frames to video
-            save_path = f"saved_evaluation_media/{self.eval_name}/{self.idx}.mp4"
-            out = cv2.VideoWriter(save_path, cv2.VideoWriter_fourcc(*'mp4v'), 10, (640, 480))
-            for frame in self.all_frames:
-                rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)  # Convert BGR to RGB
+        return {"state": state, **frames}
+
+    def record_videos(self):
+        for cam_name in self.config.data.vision.cameras:
+            save_path = (
+                f"saved_evaluation_media/{self.eval_name}/{self.idx}_{cam_name}.mp4"
+            )
+            out = cv2.VideoWriter(
+                save_path,
+                cv2.VideoWriter_fourcc(*"mp4v"),  # type: ignore[attr-defined]
+                10,
+                (640, 480),
+            )
+            for frame in self.all_frames[cam_name]:
+                rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 out.write(rgb_frame)
             out.release()
-            cv2.destroyAllWindows()
-            self.perception_system.stop()
-            self.done = True
-            print("Done")
 
-
-        return {"agent_pos": X_BE[:2, 3], 
-                "image_wrist": images_wrist,
-                "image_side": images_side}
-    
-    
     def infer_action(self, obs_deque):
+        self.infer_idx += 1
+
+        obs_cond = self.process_inference_vision(obs_deque)
 
         with torch.no_grad():
-
-            obs_cond = self.process_inference_vision(obs_deque)
-
-            if self.policy.params.method == 'diffusion':
-
+            if isinstance(self.config.model, Diffusion):
                 # initialize action from Guassian noise
-                noisy_action = torch.randn((1, self.policy.params.pred_horizon, self.policy.params.action_dim), device=self.policy.device, dtype=self.policy.precision)
+                noisy_action = torch.randn(
+                    (1, self.config.model.pred_horizon, self.config.action_shape),
+                    device=self.policy.device,
+                    dtype=self.policy.precision,
+                )
                 naction = noisy_action
                 # init scheduler
-                self.policy.noise_scheduler.set_timesteps(self.policy.params.num_diffusion_iters)
-                # self.noise_scheduler.set_timesteps(20)
+                assert self.policy.noise_scheduler is not None
+                self.policy.noise_scheduler.set_timesteps(
+                    self.config.model.num_diffusion_iters
+                )
 
                 for k in self.policy.noise_scheduler.timesteps:
                     # predict noise
-                    noise_pred = self.policy.ema_nets['noise_pred_net'](
-                        sample=naction,
-                        timestep=k,
-                        global_cond=obs_cond
+                    noise_pred = self.policy.ema_nets["noise_pred_net"](
+                        sample=naction, timestep=k, global_cond=obs_cond
                     )
 
                     # inverse diffusion step (remove noise)
                     naction = self.policy.noise_scheduler.step(
-                        model_output=noise_pred,
-                        timestep=k,
-                        sample=naction
+                        model_output=noise_pred, timestep=int(k), sample=naction
                     ).prev_sample
-            
-            elif self.policy.params.method == 'rs_imle':
-                noise = torch.randn((1, self.policy.params.pred_horizon, self.policy.params.action_dim), device=self.policy.params.device)
-                # clip noise
-                noise = torch.clamp(noise, -1, 1)
-                naction = self.policy.nets['generator'](noise, global_cond=obs_cond)
-        
-        naction = naction.detach().to('cpu').numpy()[0]
+
+                    debug_denoising = unnormalize_data(
+                        naction[0].cpu().numpy(), stats=self.policy.stats["action"]
+                    )
+                    trans = debug_denoising[:, :3]
+                    rot_6d = debug_denoising[:, 3:9]
+                    rot_mat3x3 = transform_utils.rotation_6d_to_matrix(
+                        torch.from_numpy(rot_6d)
+                    ).numpy()
+                    for i in range(trans.shape[0]):
+                        rr.log(
+                            f"/debug/denoising_step/poses_{i}",
+                            rr.Transform3D(
+                                translation=trans[i],
+                                mat3x3=rot_mat3x3[i],
+                                axis_length=0.1,
+                            ),
+                        )
+
+            elif isinstance(self.config.model, RSIMLE):
+                if self.config.model.traj_consistency:
+                    noise = torch.randn(
+                        (32, self.config.model.pred_horizon, self.config.action_shape),
+                        device=self.policy.device,
+                    )
+                    batched_naction = self.policy.nets["generator"](
+                        noise, global_cond=obs_cond
+                    )
+                    prev_traj_end = self.prev_traj[:, 8:].reshape(1, -1)
+                    gen_traj_start = batched_naction[:, :8, :].reshape(32, -1)
+
+                    # Pick the generated trajectory that has its start closest to the end of the prev traj
+                    distances = torch.cdist(gen_traj_start, prev_traj_end)
+                    min_idx = distances.argmin(dim=0)
+                    action_debug = unnormalize_data(
+                        batched_naction.cpu().numpy(),
+                        stats=self.policy.stats["action"],
+                    )
+                    naction = batched_naction[min_idx]
+
+                    action_debug_pos = action_debug[:, :, :3].reshape(-1, 3)
+                    colors = distances.repeat_interleave(
+                        self.config.model.pred_horizon, 0
+                    )
+                    rr.log(
+                        "/debug/sampled_trajectories",
+                        rr.Points3D(
+                            positions=action_debug_pos,
+                            colors=viz_utils.colormap(
+                                colors.cpu().numpy(),
+                                colors.min().item(),
+                                colors.max().item(),
+                            ),
+                            radii=0.005,
+                        ),
+                    )
+
+                    if self.infer_idx % self.config.model.periodic_length == 0:
+                        index = np.random.uniform(0, 32, size=1)[0].astype(int)
+                        self.prev_traj = batched_naction[index, :, :].unsqueeze(0)
+
+                    else:
+                        self.prev_traj = naction
+
+                else:
+                    noise = torch.randn(
+                        (1, self.config.model.pred_horizon, self.config.action_shape),
+                        device=self.config.model.device,
+                    )
+                    # clip noise
+                    noise = torch.clamp(noise, -1, 1)
+                    naction = self.policy.nets["generator"](noise, global_cond=obs_cond)
+            else:
+                raise NotImplementedError("Model not supported for inference.")
+
+        naction = naction.detach().to("cpu").numpy()[0]
 
         # unnormalize action
-        action_pos = unnormalize_data(naction, stats=self.policy.stats['agent_pos'])
+        action_pos = unnormalize_data(naction, stats=self.policy.stats["action"])
 
         # only take action_horizon number of actions
-        start = self.policy.params.obs_horizon - 1
-        end = start + self.policy.params.action_horizon
+        start = self.config.model.obs_horizon - 1
+        end = start + self.config.model.action_horizon
         action = action_pos[start:end]
 
         return {"action": action}
 
+    def log_poses(self, trans: NDArray, rots: NDArray, relative: bool = False):
+        """
+        Log action poses to rerun
+        Args:
+            trans (NDArray): Nx3 array of translations
+            rots (NDArray): Nx3x3 array of rotation matrices
+            relative (bool): whether the poses are relative to each other
+        """
+        n_actions = len(trans)
+        if relative:
+            p0, r0 = self.robot.pos, self.robot.rot
+            trans, rots = self.transform_action_to_absolute(trans, rots, p0, r0)
+        for i in range(n_actions):
+            rr.log(
+                f"/action/pose_{i}/transform",
+                rr.Transform3D(translation=trans[i], mat3x3=rots[i], axis_length=0.1),
+            )
 
-    def start_inference(self):
-        obs_stream = rx.interval(0.1, scheduler=rx.scheduler.NewThreadScheduler()) \
-                    .pipe(ops.map(lambda _: self.get_observation())) \
-                    .subscribe(lambda x: self.obs_deque.append(x))  
-        
-        current_pose = self.robot.current_pose()
-        height = current_pose.translation()[2]
-        q = current_pose.quaternion()
-        
-        # motion = robot.start_impedance_controller(1000, 40, 1)
-        self.motion = WaypointMotion([Waypoint(current_pose)], return_when_finished=False)
-        thread = self.robot.move_async(self.motion)
+    @staticmethod
+    def transform_action_to_absolute(
+        trans: NDArray,
+        rots: NDArray,
+        p0: Optional[NDArray] = None,
+        r0: Optional[NDArray] = None,
+    ) -> tuple[NDArray, NDArray]:
+        """
+        Transform relative actions to absolute actions
+        Args:
+            trans (NDArray): Nx3 array of translations
+            rots (NDArray): Nx3x3 array of rotation matrices
+        Returns:
+            tuple[NDArray, NDArray]: absolute translations and rotations
+        """
+        n_actions = len(trans)
+        current_rot = np.eye(3) if r0 is None else r0
+        current_pos = np.zeros(3) if p0 is None else p0
+        translations = np.empty_like(trans)
+        rotations = np.empty_like(rots)
+        for i in range(n_actions):
+            rel_rot = rots[i]
+            rel_trans = trans[i]
+            rotations[i] = current_rot @ rel_rot
+            translations[i] = current_pos + current_rot @ rel_trans
+            current_rot = rotations[i]
+            current_pos = translations[i]
+        return translations, rotations
 
-        start_time = time.time()    
+    def run_experiments(self, episodes):
+        for i in range(episodes):
+            self.idx = i
+            print(f"Starting episode {i + 1}/{episodes}")
+            self.done = False
+            time.sleep(0.1)
+            self.robot.move_to_start(np.deg2rad([-90, 0, 0, -90, 0, 90, 45]))
 
-        time.sleep(2)
+            input("Press Enter to start the next episode...")
+            self.obs_deque.clear()
+            self.inference_loop()
+            self.all_frames = defaultdict(list)
+            print(f"Finished episode {i + 1}/{episodes}")
+
+    def inference_loop(self):
+        self.robot.init_waypoint_motion()
+
+        obs_stream = (  # noqa: F841
+            rx.interval(0.1, scheduler=NewThreadScheduler())
+            .pipe(ops.map(lambda _: self.get_observation()))
+            .subscribe(lambda x: self.obs_deque.append(x))
+        )
+
+        start_time = time.time()
+
+        time.sleep(0.5)
+
+        all_actions = np.zeros((0, self.config.action_shape))
+
+        refresh_rate_hz = 10
+        target_dt = 1.0 / refresh_rate_hz * 4
 
         while not self.done:
-            # wait for obs_deque to have len 2
             while len(self.obs_deque) < self.obs_horizon:
-                time.sleep(0.1)
-                # print("Waiting for observation")
+                time.sleep(0.001)
+                print("Waiting for observation")
 
-            out = self.infer_action(self.obs_deque.copy())
-            action = out['action']
+            infer_start_time = time.perf_counter()
+            obs = self.obs_deque.copy()
+            out = self.infer_action(obs)
+            action = out["action"]
+            all_actions = np.concatenate([all_actions, action], axis=0)
 
             print("elapsed time: ", time.time() - start_time)
 
-            # if time.time() - start_time > 120:
-            #     print("Time limit reached")
-            #     break
+            n_trans, n_quads, _ = self.convert_actions(action)
+            r = transform_utils.rotation_6d_to_matrix(action[:, 3:9])
 
-            
-            for i in range(4,len(action)):
-                # keep everyting the same except xy which is the action
-                trans = np.array([action[i][0], action[i][1], height])
-                self.motion.set_next_waypoint(Waypoint(Affine(trans[0], trans[1], height, q[0], q[1], q[2], q[3])))
-                time.sleep(0.1)
+            self.log_poses(n_trans, r.numpy())
+            progress = action[:, -1:]
+            rr.log("/action/gripper", rr.Scalars(action[0, -2].tolist()))
+            rr.log("/action/progress", rr.Scalars(action[0, -1].tolist()))
 
+            action_horizon_len = int(len(action) / 2)
+            relative = self.config.data.action_relative
+            self.robot.set_next_waypoints(
+                n_trans[0:action_horizon_len],
+                n_quads[0:action_horizon_len],
+                relative=relative,
+            )
+            for i in range(0, int(len(action) / 2)):
+                time.sleep(1 / refresh_rate_hz)
+                if action[i][-2] > 0.5:
+                    self.robot.close_gripper()
+                else:
+                    self.robot.open_gripper()
 
+            if progress[0] >= 0.95:
+                self.robot.stop_motion()
+                obs_stream.dispose()
+                self.record_videos()
+                self.done = True
 
+            elapsed_time = time.perf_counter() - infer_start_time
+            rr.log("/debug/inference_time", rr.Scalars(elapsed_time))
+            remaining_time = target_dt - elapsed_time
+            if remaining_time > 0:
+                time.sleep(remaining_time)
 
+            if (time.time() - start_time) > self.timeout:
+                print("Timeout reached, ending inference.")
+                self.robot.stop_motion()
+                obs_stream.dispose()
+                self.record_videos()
+                self.done = True
 
-if __name__ == '__main__':
-    
+        assert self.robot.move_async is not None
+        self.robot.move_async.join()
 
+    def convert_actions(
+        self, action: np.ndarray
+    ) -> tuple[list[np.ndarray], np.ndarray, list[sm.SE3]]:
+        t = action[:, :3]
+        rot = action[:, 3:-2]
 
-    controller = RobotInferenceController(eval_name='rs_imle_policy_10', idx=0)
-    controller.start_inference()
-    controller.perception_system.stop()
+        poses = transform_utils.pos_rot_to_se3(torch.from_numpy(t), rot)
+        trans = t.tolist()
+        quads = transform_utils.rotation_6d_to_quat(torch.from_numpy(rot)).numpy()
+
+        return trans, quads, poses

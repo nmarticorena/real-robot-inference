@@ -1,0 +1,8 @@
+[project]
+name = "rs_imle_policy"
+version = "0.1.0"
+description = "real-robot-inference"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
