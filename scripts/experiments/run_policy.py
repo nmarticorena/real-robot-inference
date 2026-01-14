@@ -30,7 +30,7 @@ os.makedirs(f"saved_evaluation_media/{exp_name}", exist_ok=True)
 rr.save(f"saved_evaluation_media/{exp_name}/rerun_recording.rrd")
 subprocess.Popen(["rerun", f"saved_evaluation_media/{exp_name}/rerun_recording.rrd"])
 
-controller = RobotInferenceController(config, eval_name=exp_name, timeout=args.timeout)
+controller = RobotInferenceController(config, eval_name=exp_name, timeout=args.timeout, dry_run=args.dry_run)
 
 controller.run_experiments(10)
 controller.perception_system.stop()

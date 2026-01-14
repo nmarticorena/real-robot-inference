@@ -189,6 +189,7 @@ class LoaderConfig:
     timeout: int = 60  # Timeout for experiment in seconds
     episodes: int = 10  # total number of episodes to run
     exp_name: Optional[str] = None
+    dry_run: bool = False
 
 
 if __name__ == "__main__":

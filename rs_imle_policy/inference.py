@@ -86,6 +86,7 @@ class RobotInferenceController:
         config: Experiment configuration
         eval_name: Name of the evaluation run
         timeout: Maximum time (seconds) for an episode
+        dry_run: Flag for dry run mode
         robot: Frankx robot controller
         perception_system: Camera perception system
         policy: Trained policy model
@@ -93,13 +94,13 @@ class RobotInferenceController:
         gui: Rerun visualization interface
     """
     
-    def __init__(self, config: ExperimentConfig, eval_name: str, timeout: int):
+    def __init__(self, config: ExperimentConfig, eval_name: str, timeout: int, dry_run: bool = False):
         self.infer_idx = 0
         self.last_called_obs = time.time()
         self.seed(DEFAULT_SEED)
         self.config = config
         self.config.training = False
-        self.robot = FrankxRobot()
+        self.robot = FrankxRobot(dry_run=dry_run)
         self.robot.move_to_start(np.deg2rad([-90, 0, 0, -90, 0, 90, 45]))
         self.timeout = timeout
 

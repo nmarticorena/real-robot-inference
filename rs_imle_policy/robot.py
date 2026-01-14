@@ -52,6 +52,7 @@ class FrankxRobot:
         self,
         ip: str = DEFAULT_ROBOT_IP,
         dynamic_rel: float = DEFAULT_DYNAMIC_REL,
+        dry_run: bool = False,
     ):
         """Initialize the robot controller.
         
@@ -59,10 +60,13 @@ class FrankxRobot:
             ip: Robot IP address
             dynamic_rel: Dynamic scaling factor for robot motion
         """
+        self.robot = Robot(ip, dynamic_rel=dynamic_rel, repeat_on_error=True)
+        self.robot.recover_from_errors()
         self.gripper = Gripper(fci_ip=ip, speed=DEFAULT_GRIPPER_SPEED)
         self.gripper.open(True)
         self.gripper_state = GripperState.OPEN
-        self.robot = Robot(ip, dynamic_rel=dynamic_rel, repeat_on_error=True)
+
+        self.dry_run = dry_run
         self.move_async = None
         self.motion = None
 
@@ -160,6 +164,9 @@ class FrankxRobot:
             Waypoint(Affine(trans[0], trans[1], trans[2], q[0], q[1], q[2], q[3]))
             for trans, q in zip(translations, orientations)
         ]
+
+        if self.dry_run:
+            return
         self.motion.set_next_waypoints(waypoints)
 
     def init_waypoint_motion(self):
