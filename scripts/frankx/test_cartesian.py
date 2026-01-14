@@ -1,8 +1,13 @@
 from frankx import Affine, WaypointMotion, Waypoint, Robot, JointMotion
 import numpy as np
+import os
 
-robot = Robot("172.16.0.2", repeat_on_error=True, user="franka", password="franka123")
-robot.recover_from_errors()
+breakpoint()
+
+robot = Robot(
+    os.environ["PANDA_IP"], repeat_on_error=True, user="franka", password="franka123"
+)
+# robot.recover_from_errors()
 robot.set_dynamic_rel(0.05)
 robot.move(JointMotion(np.deg2rad([-90, 0, 0, -90, 0, 90, 45])))
 
