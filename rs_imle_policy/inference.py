@@ -173,7 +173,7 @@ class RobotInferenceController:
             for cam_name in cams:
                 image = np.stack([x[cam_name] for x in obs_deque])
                 input_image = torch.stack([self.policy.transform(img) for img in image])
-                feat = encoders[f"vision_encoder_{cam_name}"](input_image)
+                feat = encoders[f"vision_encoder_{cam_name}"](input_image.to(device, dtype))
                 image_features.append(feat)
 
         obs_features = torch.cat(image_features + [nagent_pos], dim=-1)
@@ -188,7 +188,10 @@ class RobotInferenceController:
             dict: Dictionary containing robot state and camera frames
         """
         state = self.robot.get_state()
+        robot_state = self.robot.get_robot_state()
         images = self.perception_system.cams.get()
+
+        self.gui.log_robot_state(robot_state.q)
 
         frames = {}
         for ix, cam_name in enumerate(self.config.data.vision.cameras):
@@ -442,9 +445,10 @@ class RobotInferenceController:
             print("elapsed time: ", time.time() - start_time)
 
             n_trans, n_quads, _ = self.convert_actions(action)
-            r = transform_utils.rotation_6d_to_matrix(action[:, 3:9])
 
-            self.log_poses(n_trans, r.numpy())
+            r = transform_utils.rotation_6d_to_matrix(action[:, 3:9])
+           
+            self.log_poses(n_trans, r.numpy(), relative=self.config.data.action_relative)
             progress = action[:, -1:]
             rr.log("/action/gripper", rr.Scalars(action[0, -2].tolist()))
             rr.log("/action/progress", rr.Scalars(action[0, -1].tolist()))

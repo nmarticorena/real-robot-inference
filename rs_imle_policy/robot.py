@@ -18,7 +18,7 @@ from rs_imle_policy.utils import transforms
 # Constants
 DEFAULT_ROBOT_IP = "172.16.0.2"
 DEFAULT_GRIPPER_SPEED = 0.1
-DEFAULT_DYNAMIC_REL = 1.0
+DEFAULT_DYNAMIC_REL = 0.4
 CARTESIAN_IMPEDANCE = [400.0, 400.0, 400.0, 40.0, 40.0, 40.0]
 ACCEL_REL = 0.1
 JERK_REL = 0.1
@@ -70,7 +70,9 @@ class FrankxRobot:
         self.move_async = None
         self.motion = None
 
-        self.X_BE = self.robot.get_pose()
+        state = self.robot.read_once()
+        self.X_BE = np.array(state.O_T_EE).reshape(4, 4, order="F")
+
         self.pos = self.X_BE[:3, 3]
         self.rot = self.X_BE[:3, :3]
 
@@ -95,11 +97,12 @@ class FrankxRobot:
             home_config: Joint configuration for home position, or None to skip
         """
         if home_config is not None:
-            self.robot.move(JointMotion(goal=home_config))
-        self.close_gripper()
+            self.robot.move(JointMotion(target=home_config))
+        self.open_gripper()
 
     def close_gripper(self):
         """Close the gripper if not already closed."""
+        print("Closing gripper")
         if self.gripper_state != GripperState.CLOSED:
             self.gripper.close(blocking=False)
             self.gripper_state = GripperState.CLOSED
@@ -150,6 +153,16 @@ class FrankxRobot:
 
         return np.concatenate([pos, rot, [width]])
 
+    def get_robot_state(self):
+        """Get the full robot state from the motion controller.
+        
+        Returns:
+            Robot state object from frankx
+        """
+        if self.motion is None:
+            raise RuntimeError("Motion not initialized")
+        return self.motion.get_robot_state()
+
     def set_next_waypoints(
         self, translations, orientations, relative: bool = False
     ):
@@ -160,8 +173,11 @@ class FrankxRobot:
             orientations: Array of shape (N, 4) in quaternion format [w, x, y, z]
             relative: If True, waypoints are relative to current pose (not yet implemented)
         """
+        assert self.motion is not None, "Motion not initialized"
+        ref = Waypoint.Relative if relative else Waypoint.Absolute
+
         waypoints = [
-            Waypoint(Affine(trans[0], trans[1], trans[2], q[0], q[1], q[2], q[3]))
+            Waypoint(Affine(trans[0], trans[1], trans[2], q[0], q[1], q[2], q[3]), ref)
             for trans, q in zip(translations, orientations)
         ]
 
@@ -175,9 +191,9 @@ class FrankxRobot:
         Creates a waypoint motion starting from the current robot pose and
         starts asynchronous motion execution.
         """
-        current_pose = self.robot.get_pose()
+        current_pose = self.robot.current_pose()
         self.motion = WaypointMotion(
-            [Waypoint(goal=current_pose)],
+            [Waypoint(affine=current_pose)],
             return_when_finished=False,
         )
         self.move_async = self.robot.move_async(self.motion)
