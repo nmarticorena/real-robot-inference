@@ -26,7 +26,7 @@ from rs_imle_policy.configs.train_config import (
 from rs_imle_policy.dataset import normalize_data, unnormalize_data
 from rs_imle_policy.policy import Policy
 from rs_imle_policy.realsense.multi_realsense import MultiRealsense
-from rs_imle_policy.robot import FrankxRobot
+from rs_imle_policy.robot import FrankxRobot, PandaPyRobot
 from rs_imle_policy.visualizer.rerun_tools import ReRunRobot
 
 # Constants
@@ -43,15 +43,15 @@ INFERENCE_TARGET_DT_MULTIPLIER = 4
 
 class PerceptionSystem:
     """Manages camera perception for robot control.
-    
+
     This class handles initialization and control of multiple RealSense cameras
     used for visual perception in robot inference tasks.
-    
+
     Attributes:
         cams: MultiRealsense camera manager
         cams_config: Vision configuration parameters
     """
-    
+
     def __init__(self, vision_config: VisionConfig):
         serial_numbers = [cam.serial_number for cam in vision_config.cameras_params]
         self.cams = MultiRealsense(
@@ -78,10 +78,10 @@ class PerceptionSystem:
 
 class RobotInferenceController:
     """Controller for robot inference with visual policy.
-    
+
     This class manages the complete inference pipeline including perception,
     policy inference, and robot control for executing learned manipulation tasks.
-    
+
     Attributes:
         config: Experiment configuration
         eval_name: Name of the evaluation run
@@ -93,14 +93,23 @@ class RobotInferenceController:
         obs_deque: Observation history buffer
         gui: Rerun visualization interface
     """
-    
-    def __init__(self, config: ExperimentConfig, eval_name: str, timeout: int, dry_run: bool = False):
+
+    def __init__(
+        self,
+        config: ExperimentConfig,
+        eval_name: str,
+        timeout: int,
+        dry_run: bool = False,
+    ):
         self.infer_idx = 0
         self.last_called_obs = time.time()
         self.seed(DEFAULT_SEED)
         self.config = config
         self.config.training = False
-        self.robot = FrankxRobot(dry_run=dry_run)
+        if dry_run:
+            self.robot = PandaPyRobot(dry_run=dry_run)
+        else:
+            self.robot = FrankxRobot(dry_run=dry_run)
         self.robot.move_to_start(np.deg2rad([-90, 0, 0, -90, 0, 90, 45]))
         self.timeout = timeout
 
@@ -121,7 +130,7 @@ class RobotInferenceController:
 
     def seed(self, seed: int):
         """Set random seeds for reproducibility.
-        
+
         Args:
             seed: Random seed value
         """
@@ -146,10 +155,10 @@ class RobotInferenceController:
 
     def process_inference_vision(self, obs_deque):
         """Process visual observations through encoders.
-        
+
         Args:
             obs_deque: Deque of observations containing state and camera images
-            
+
         Returns:
             Tensor: Processed observation features ready for policy inference
         """
@@ -173,7 +182,9 @@ class RobotInferenceController:
             for cam_name in cams:
                 image = np.stack([x[cam_name] for x in obs_deque])
                 input_image = torch.stack([self.policy.transform(img) for img in image])
-                feat = encoders[f"vision_encoder_{cam_name}"](input_image.to(device, dtype))
+                feat = encoders[f"vision_encoder_{cam_name}"](
+                    input_image.to(device, dtype)
+                )
                 image_features.append(feat)
 
         obs_features = torch.cat(image_features + [nagent_pos], dim=-1)
@@ -183,7 +194,7 @@ class RobotInferenceController:
 
     def get_observation(self):
         """Capture current robot state and camera frames.
-        
+
         Returns:
             dict: Dictionary containing robot state and camera frames
         """
@@ -224,10 +235,10 @@ class RobotInferenceController:
 
     def infer_action(self, obs_deque):
         """Infer action from observations using the policy model.
-        
+
         Args:
             obs_deque: Deque of recent observations
-            
+
         Returns:
             dict: Dictionary containing action sequence
         """
@@ -396,7 +407,7 @@ class RobotInferenceController:
 
     def run_experiments(self, episodes: int):
         """Run multiple evaluation episodes.
-        
+
         Args:
             episodes: Number of episodes to run
         """
@@ -447,8 +458,10 @@ class RobotInferenceController:
             n_trans, n_quads, _ = self.convert_actions(action)
 
             r = transform_utils.rotation_6d_to_matrix(action[:, 3:9])
-           
-            self.log_poses(n_trans, r.numpy(), relative=self.config.data.action_relative)
+
+            self.log_poses(
+                n_trans, r.numpy(), relative=self.config.data.action_relative
+            )
             progress = action[:, -1:]
             rr.log("/action/gripper", rr.Scalars(action[0, -2].tolist()))
             rr.log("/action/progress", rr.Scalars(action[0, -1].tolist()))
@@ -493,10 +506,10 @@ class RobotInferenceController:
         self, action: np.ndarray
     ) -> tuple[list[np.ndarray], np.ndarray, list[sm.SE3]]:
         """Convert action array to different pose representations.
-        
+
         Args:
             action: Action array with position, rotation, and gripper state
-            
+
         Returns:
             Tuple of translations, quaternions, and SE3 poses
         """
