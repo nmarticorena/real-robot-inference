@@ -73,6 +73,16 @@ class VisionConfig:
 
 
 @dataclass
+class G1VisionConfig(VisionConfig):
+    """Vision configuration for G1 dataset"""
+
+    cameras: tuple[str, ...] = ("color_0",)
+
+    def __post_init__(self):
+        return
+
+
+@dataclass
 class DataConfig:
     """
     Data / environment configuration.
