@@ -122,6 +122,28 @@ class DataConfig:
 
 
 @dataclass
+class G1ArmsDataConfig(DataConfig):
+    """Data configuration for G1 arms dataset"""
+
+    lowdim_obs_keys: tuple[str, ...] = (
+        "left_robot_pos",
+        "left_robot_orien",
+        "right_robot_pos",
+        "right_robot_orien",
+        "progress",
+    )
+
+    action_keys: tuple[str, ...] = (
+        "left_action_pos",
+        "left_action_orien",
+        "right_action_pos",
+        "right_action_orien",
+    )
+
+    vision: VisionConfig = field(default_factory=G1VisionConfig)
+
+
+@dataclass
 class OptimConfig:
     """Optimization and training parameters"""
 

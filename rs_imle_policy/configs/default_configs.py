@@ -3,6 +3,7 @@ from rs_imle_policy.configs.train_config import (
     RSIMLE,
     Diffusion,
     DataConfig,
+    G1ArmsDataConfig,
 )
 from dataclasses import dataclass, field
 
@@ -67,9 +68,17 @@ class PickPlaceDiffusionRelativeConfig(ExperimentConfig):
     data: DataConfig = field(default_factory=RelativeActionsConfig)
 
 
-ExperimentConfigChoice = (
-    PickPlaceRSMLEConfig
-    | PickPlaceRSMLERelativeConfig
-    | PickPlaceDiffusionConfig
-    | PickPlaceDiffusionRelativeConfig
-)
+@dataclass
+class G1ArmsRSIMLEConfig(ExperimentConfig):
+    """G1 arms dataset with RS-IMLE"""
+
+    model: RSIMLE | Diffusion = field(default_factory=RSIMLE)
+    data: DataConfig = field(default_factory=G1ArmsDataConfig)
+
+
+@dataclass
+class G1ArmsDiffusionConfig(ExperimentConfig):
+    """G1 arms dataset with Diffusion"""
+
+    model: RSIMLE | Diffusion = field(default_factory=Diffusion)
+    data: DataConfig = field(default_factory=G1ArmsDataConfig)
