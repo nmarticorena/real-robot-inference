@@ -16,7 +16,8 @@ def convert_to_h5(dataset_path: str, /, vision_config: G1VisionConfig):
             key=lambda x: int(x.split("_")[-1]),
         )
         for episode in tqdm.tqdm(episodes):
-            grp = h5f.create_group(f"{episode}")
+            episode_id = int(episode.split("_")[-1])
+            grp = h5f.create_group(f"{episode_id}")
             for ix, cam_name in enumerate(vision_config.cameras):
                 image_path = os.path.join(dataset_path, "episodes", episode, "colors")
                 image_files = sorted(
@@ -28,7 +29,6 @@ def convert_to_h5(dataset_path: str, /, vision_config: G1VisionConfig):
                     resized_image = cv2.resize(image, vision_config.img_shape[::-1])
                     frames.append(resized_image)
 
-                breakpoint()
                 # Assuming typical access of 16 frames at a time.
                 chunk_size = (16, *vision_config.img_shape, 3)
 
