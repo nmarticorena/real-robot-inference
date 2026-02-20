@@ -16,7 +16,7 @@ from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
 from diffusers.training_utils import EMAModel
 
 from rs_imle_policy.configs.train_config import Diffusion, ExperimentConfig, RSIMLE
-from rs_imle_policy.dataset import PolicyDataset
+from rs_imle_policy.datasets import BaseDataset
 from rs_imle_policy.network import (
     DiffusionConditionalUnet1D,
     GeneratorConditionalUnet1D,
@@ -27,10 +27,10 @@ from rs_imle_policy.network import (
 
 class Policy:
     """Manages policy model initialization, training, and inference.
-    
+
     Supports both diffusion-based policies and RS-IMLE generative policies
     for robot manipulation tasks.
-    
+
     Attributes:
         config: Experiment configuration
         device: Compute device (CPU or CUDA)
@@ -41,10 +41,10 @@ class Policy:
         stats: Data normalization statistics
         transform: Image preprocessing transforms
     """
-    
-    def __init__(self, config: ExperimentConfig):
+
+    def __init__(self, config: ExperimentConfig, dataset: BaseDataset | None = None):
         """Initialize the policy.
-        
+
         Args:
             config: Experiment configuration object
         """
@@ -63,16 +63,8 @@ class Policy:
         self.precision = torch.float32
         self.device = self.config.model.device
         if self.config.training:
-            self.dataset = PolicyDataset(
-                self.config.dataset_path,
-                self.config.model.pred_horizon,
-                self.config.model.obs_horizon,
-                self.config.model.action_horizon,
-                low_dim_obs_keys=self.config.data.lowdim_obs_keys,
-                action_keys=self.config.data.action_keys,
-                vision_config=self.config.data.vision,
-                use_next_state=self.config.data.use_next_state,
-            )
+            assert dataset is not None, "Dataset must be provided for training mode"
+            self.dataset = dataset
             self.dataloader = torch.utils.data.DataLoader(
                 self.dataset,
                 batch_size=self.config.training_params.batch_size,
@@ -103,7 +95,7 @@ class Policy:
         else:
             self.folder = os.path.join(
                 "saved_weights",
-                self.config.task_name,
+                self.config.data.task_name,
                 self.config.model.name + "_" + self.config.exp_name,
             )
             stats_path = os.path.join(self.folder, "stats.pkl")
@@ -154,7 +146,7 @@ class Policy:
 
     def create_networks(self) -> nn.ModuleDict:
         """Create and initialize neural networks for the policy.
-        
+
         Returns:
             ModuleDict containing vision encoders and policy network
         """

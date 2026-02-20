@@ -73,6 +73,16 @@ class VisionConfig:
 
 
 @dataclass
+class G1VisionConfig(VisionConfig):
+    """Vision configuration for G1 dataset"""
+
+    cameras: tuple[str, ...] = ("color_0",)
+
+    def __post_init__(self):
+        return
+
+
+@dataclass
 class DataConfig:
     """
     Data / environment configuration.
@@ -109,6 +119,28 @@ class DataConfig:
 
     # Vision configuration
     vision: VisionConfig = field(default_factory=VisionConfig)
+
+
+@dataclass
+class G1ArmsDataConfig(DataConfig):
+    """Data configuration for G1 arms dataset"""
+
+    lowdim_obs_keys: tuple[str, ...] = (
+        "left_robot_pos",
+        "left_robot_orien",
+        "right_robot_pos",
+        "right_robot_orien",
+        "progress",
+    )
+
+    action_keys: tuple[str, ...] = (
+        "left_action_pos",
+        "left_action_orien",
+        "right_action_pos",
+        "right_action_orien",
+    )
+
+    vision: VisionConfig = field(default_factory=G1VisionConfig)
 
 
 @dataclass
