@@ -19,7 +19,7 @@ def convert_to_h5(dataset_path: str, /, vision_config: G1VisionConfig):
             episode_id = int(episode.split("_")[-1])
             grp = h5f.create_group(f"{episode_id}")
             for ix, cam_name in enumerate(vision_config.cameras):
-                image_path = os.path.join(dataset_path, "episodes", episode, "colors")
+                image_path = os.path.join(dataset_path, "episodes", episode, cam_name, "colors")
                 image_files = sorted(
                     os.listdir(image_path), key=lambda x: int(x.split("_")[0])
                 )

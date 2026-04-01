@@ -95,32 +95,6 @@ class G1ArmsDataset(BaseDataset):
                 for q in robot_state
             ]
 
-            # to check thath the fkine was working
-            # import rerun as rr
-            #
-            # from motion_tools.robot_gui import ReRunRobot
-            #
-            # rec = rr.RecordingStream("g1_arms_dataset")
-            # rec.spawn()
-            # g1 = ReRunRobot.g1(rec, target_frame = "pelvis")
-            #
-            # for left, right, q in zip(left_hand_X_BE_current, right_hand_X_BE_current, robot_state):
-            #     left_t, left_r = left.t, left.R
-            #     rec.log("left_hand",rr.Transform3D(
-            #                     translation= left_t ,
-            #                     mat3x3=left_r,
-            #                     parent_frame="pelvis"),
-            #             rr.TransformAxes3D(axis_length=0.1)
-            #            )
-            #     right_t, right_r = right.t, right.R
-            #     rec.log("right_hand",rr.Transform3D(
-            #                     translation= right_t ,
-            #                     mat3x3=right_r,
-            #                     parent_frame="pelvis"),
-            #             rr.TransformAxes3D(axis_length=0.1)
-            #            )
-            #     g1.log(q)
-
             if self.use_next_state:
                 left_hand_X_BE_next = left_hand_X_BE_current[1:]
                 left_hand_X_BE_next.append(left_hand_X_BE_current[-1])

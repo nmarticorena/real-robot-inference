@@ -163,8 +163,15 @@ class PandaPolicyDataset(BaseDataset):
 if __name__ == "__main__":
     import time
 
+    from pathlib import Path
+
     dataset = PandaPolicyDataset(
-        "data/t_block_1", pred_horizon=16, obs_horizon=2, action_horizon=8
+        Path("data/t_block_1"),
+        pred_horizon=16,
+        obs_horizon=2,
+        action_horizon=8,
+        low_dim_obs_keys=("robot_pos", "robot_orien", "gripper_state"),
+        action_keys=("action_pos", "action_orien", "action_gripper", "progress"),
     )
 
     idx = 0
