@@ -3,12 +3,11 @@ import tyro
 import shutil
 import torch.nn as nn
 from tqdm.auto import tqdm
-from dataset import PolicyDataset
 import wandb
 import numpy as np
 import copy
 import time
-from policy import Policy
+from rs_imle_policy.policy import Policy
 import os
 
 from rs_imle_policy.configs.train_config import ExperimentConfig, Diffusion, RSIMLE
@@ -184,6 +183,7 @@ def main():
     from rs_imle_policy.configs.default_configs import (
         PickPlaceRSMLERelativeConfig as Config,
     )
+    from rs_imle_policy.datasets.single_franka import PandaPolicyDataset
 
     args = tyro.cli(Config)
     wandb.init(project=args.task_name, config=args)
@@ -191,7 +191,7 @@ def main():
     # change wandb name
     wandb.run.name = f"{args.exp_name}_{args.model.name}"
 
-    dataset = PolicyDataset(
+    dataset = PandaPolicyDataset(
         args.dataset_path,
         args.model.pred_horizon,
         args.model.obs_horizon,
@@ -211,7 +211,6 @@ def main():
             persistent_workers=False,
         )
         print("debug")
-
     else:
         dataloader = torch.utils.data.DataLoader(
             dataset,
